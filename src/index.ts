@@ -5,24 +5,72 @@ import path from 'path'
 import fs from 'fs-extra'
 import { getConfig, setConfig, getReposBaseDir, getCurrentRepo, RepoConfig } from './config.js'
 import { cloneOrUpdateRepo, runGitCommand } from './git.js'
-import { linkRule } from './link.js'
-import { addDependency, getProjectConfig } from './project-config.js'
+import { linkRule, unlinkRule } from './link.js'
+import { addIgnoreEntry } from './utils.js'
+import { addDependency, removeDependency, getProjectConfig, getCombinedProjectConfig } from './project-config.js'
 
 const program = new Command()
 
 program.name('crs').description('Cursor Rules Sync - Sync cursor rules from git repository').version('1.0.0')
-    .option('-t, --target <repoName>', 'Specify target rule repository');
+    .option('-t, --target <repoName>', 'Specify target rule repository (name or URL)');
 
 // Helper to get repo config
 async function getTargetRepo(options: any): Promise<RepoConfig> {
   const config = await getConfig();
 
   if (options.target) {
-    const repoName = options.target;
-    if (config.repos && config.repos[repoName]) {
-      return config.repos[repoName];
+    const target = options.target;
+
+    // 1. Try as existing name
+    if (config.repos && config.repos[target]) {
+      return config.repos[target];
     }
-    throw new Error(`Repository "${repoName}" not found in configuration.`);
+
+    // 2. Try as URL
+    if (target.includes('://') || target.includes('git@') || target.endsWith('.git')) {
+        // Check if this URL is already configured under ANY name
+        if (config.repos) {
+            for (const [key, repo] of Object.entries(config.repos)) {
+                if (repo.url === target) {
+                    return repo;
+                }
+            }
+        }
+
+        // Not found, add it
+        console.log(chalk.blue(`Detected URL for target. Configuring repository...`));
+
+        let name = path.basename(target, '.git');
+        if (!name) name = 'repo-' + Date.now();
+
+        // Handle name collision: if name exists but URL differs, append suffix
+        if (config.repos && config.repos[name] && config.repos[name].url !== target) {
+            name = `${name}-${Date.now()}`;
+        }
+
+        // If name exists and URL matches, just use it (already handled by step 1/loop above?
+        // No, step 1 checked key=target. The loop checked value.url=target.
+        // If we get here, target is not a key, and target URL is not in values.
+        // But 'name' derived from target might match a key with DIFFERENT url (handled by collision check)
+        // or same URL (should be handled by loop, but loop might miss if config structure is weird? Unlikely).
+        // Let's proceed with adding.
+
+        const repoDir = path.join(getReposBaseDir(), name);
+        const newRepo: RepoConfig = {
+            name,
+            url: target,
+            path: repoDir
+        };
+
+        await setConfig({
+            repos: { ...(config.repos || {}), [name]: newRepo }
+        });
+
+        await cloneOrUpdateRepo(newRepo);
+        return newRepo;
+    }
+
+    throw new Error(`Repository "${target}" not found in configuration.`);
   }
 
   const currentRepo = await getCurrentRepo();
@@ -133,6 +181,7 @@ program
   .description('Sync cursor rules to project')
   .argument('<ruleName>', 'Name of the rule directory in the rules repo')
   .argument('[alias]', 'Alias for the rule name (e.g. react-v2)')
+  .option('-l, --local', 'Add to cursor-rules.local.json (private rule)')
   .action(async (ruleName, alias, options) => {
     try {
       const opts = program.opts();
@@ -144,13 +193,53 @@ program
 
       console.log(chalk.gray(`Using repository: ${chalk.cyan(currentRepo.name)} (${currentRepo.url})`))
 
-      await linkRule(projectPath, ruleName, currentRepo, alias)
+      const isLocal = options.local;
+      await linkRule(projectPath, ruleName, currentRepo, alias, isLocal)
 
       // Save dependency
-      await addDependency(projectPath, ruleName, currentRepo.url, alias)
-      console.log(chalk.green(`Updated cursor-rules.json dependency.`))
+      await addDependency(projectPath, ruleName, currentRepo.url, alias, isLocal)
+
+      const configFileName = isLocal ? 'cursor-rules.local.json' : 'cursor-rules.json';
+      console.log(chalk.green(`Updated ${configFileName} dependency.`))
+
+      if (isLocal) {
+          // Add cursor-rules.local.json to .gitignore if not present
+          const gitignorePath = path.join(projectPath, '.gitignore');
+          const added = await addIgnoreEntry(gitignorePath, 'cursor-rules.local.json', '# Local Cursor Rules Config');
+
+          if (added) {
+            console.log(chalk.green(`Added "cursor-rules.local.json" to .gitignore.`));
+          }
+      }
+
     } catch (error: any) {
       console.error(chalk.red('Error adding rule:'), error.message)
+      process.exit(1)
+    }
+  })
+
+program
+  .command('remove')
+  .description('Remove a cursor rule from project')
+  .argument('<alias>', 'Alias (or name) of the rule to remove')
+  .action(async (alias) => {
+    try {
+      const projectPath = process.cwd();
+
+      // 1. Remove symlink and ignore entry
+      await unlinkRule(projectPath, alias);
+
+      // 2. Remove dependency from config (both global and local)
+      const removedFrom = await removeDependency(projectPath, alias);
+
+      if (removedFrom.length > 0) {
+        console.log(chalk.green(`Removed rule "${alias}" from configuration: ${removedFrom.join(', ')}`));
+      } else {
+        console.log(chalk.yellow(`Rule "${alias}" was not found in any configuration file.`));
+      }
+
+    } catch (error: any) {
+      console.error(chalk.red('Error removing rule:'), error.message)
       process.exit(1)
     }
   })
@@ -161,11 +250,11 @@ program
     .action(async () => {
       try {
         const projectPath = process.cwd();
-        const config = await getProjectConfig(projectPath)
+        const config = await getCombinedProjectConfig(projectPath)
         const rules = config.rules
 
         if (!rules || Object.keys(rules).length === 0) {
-          console.log(chalk.yellow('No rules found in cursor-rules.json.'))
+          console.log(chalk.yellow('No rules found in cursor-rules.json or cursor-rules.local.json.'))
           return
         }
 
@@ -228,7 +317,31 @@ program
           }
         }
 
-        await linkRule(projectPath, ruleName, repoConfig, alias)
+        // Determine if this rule came from local config
+        // Since we read combined config, we don't know easily without checking local file separately or changing getCombinedProjectConfig
+        // BUT, getCombinedProjectConfig merges.
+        // If we want strict privacy, crs install might be tricky if mixed.
+        // Simple solution: check if key exists in local config file.
+        const localConfig = await getProjectConfig(projectPath).then(async () => {
+             // We need to read raw local file
+             const localPath = path.join(projectPath, 'cursor-rules.local.json');
+             if (await fs.pathExists(localPath)) {
+                 return await fs.readJson(localPath);
+             }
+             return { rules: {} };
+        });
+
+        // Check if rule is in local config rules
+        // Note: localConfig structure matches ProjectConfig interface
+        let isLocal = false;
+        if (localConfig.rules) {
+            // Check if 'key' (the alias/name used in rules object) exists in local rules
+            if (Object.prototype.hasOwnProperty.call(localConfig.rules, key)) {
+                isLocal = true;
+            }
+        }
+
+        await linkRule(projectPath, ruleName, repoConfig, alias, isLocal)
       }
       console.log(chalk.green('All rules installed successfully.'))
     } catch (error: any) {
@@ -240,44 +353,35 @@ program
 program
   .command('git')
   .description('Run git commands in the rules repository')
-  .argument('[command]', 'Git command to run')
+  .argument('[args...]', 'Git arguments')
   .allowUnknownOption()
-  .action(async (_cmd, commandObj) => {
-    const args = process.argv
-    const gitIndex = args.indexOf('git')
+  .action(async (args, commandObj) => {
+    // args will contain everything after 'git' that isn't a known global option
+    // IF we use .argument('[args...]').
 
-    // We need to parse our own options from process.argv if we use allowUnknownOption
-    // However, global options might be consumed by commander if placed before subcommand.
-    // If placed after, allowUnknownOption logic applies.
-    // But since we define -t on program, commander should parse it if it appears.
+    // However, with allowUnknownOption, commander behavior is subtle.
+    // If we define arguments, commander tries to parse them.
 
-    // Let's rely on program.opts() for global options.
+    // Let's rely on manual parsing from process.argv to be safe and consistent with previous logic,
+    // but we need to update the command definition to NOT enforce single arg.
+
+    // Actually, simply removing .argument() or changing to [args...] should fix the validation error.
+
+    // The previous implementation manually sliced process.argv.
+    // Let's keep that manual slicing logic as it handles the "global option after subcommand" case reasonably well
+    // provided we fix the validation error.
+
+    const procArgs = process.argv
+    const gitIndex = procArgs.indexOf('git')
+
+    // ... (rest of logic)
+
     const opts = program.opts();
-
-    // Filter out global options from git args?
-    // This is tricky. simpler is to trust commander to extract opts.
-    // But gitArgs should contain everything after 'git'.
-    // If user runs `crs git status -t`, args might contain -t.
-    // If user runs `crs -t repo git status`, args won't contain -t.
-
-    let gitArgs = args.slice(gitIndex + 1)
-
-    // If -t is passed after git, we need to remove it from gitArgs so git doesn't choke on it (unless git supports it)
-    // BUT user specifically said `crs git status -t`. This implies -t is for US.
-    // So we should filter it out.
-    // Simplest way: filter out '-t' and its value from gitArgs.
+    let gitArgs = procArgs.slice(gitIndex + 1)
 
     const newGitArgs = [];
     for (let i = 0; i < gitArgs.length; i++) {
         if (gitArgs[i] === '-t' || gitArgs[i] === '--target') {
-            // It's our option. Consume it and next arg.
-            // But wait, commander already parsed it into program.opts().target?
-            // If passed after subcommand, maybe yes maybe no depending on commander version/config.
-            // With .enablePositionalOptions() maybe?
-            // Default commander behavior: options after subcommand are subcommand options.
-            // But we defined it on program.
-
-            // To be safe and simple: manually remove -t/--target and its value from gitArgs.
             i++;
             continue;
         }

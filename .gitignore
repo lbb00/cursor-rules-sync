@@ -1,2 +1,5 @@
 node_modules
 .DS_Store
+
+# Local Cursor Rules Config
+cursor-rules.local.json

@@ -19,7 +19,7 @@ npm install -g cursor-rules-sync
 
 所有命令都支持以下全局选项：
 
-- `-t, --target <repo>`: 指定要使用的目标规则仓库。
+- `-t, --target <repo>`: 指定要使用的目标规则仓库（名称或 URL）。
 
 ## 命令
 
@@ -53,6 +53,16 @@ crs add [rule name] [alias]
 - `[rule name]`: 规则仓库中的规则文件夹名称。
 - `[alias]`: （可选）在本地项目中使用的名称。如果指定，规则将被链接为 `.cursor/rules/[alias]`。这在处理规则重名或需要重命名时非常有用。
 
+**添加私有规则：**
+
+使用 `-l` 或 `--local` 标志将规则添加到 `cursor-rules.local.json` 而不是 `cursor-rules.json`。这对于不需要提交到 Git 的规则非常有用。
+
+```bash
+crs add react --local
+```
+
+该命令还会自动将 `cursor-rules.local.json` 添加到你的 `.gitignore` 文件中。
+
 **示例：**
 
 ```bash
@@ -64,9 +74,20 @@ crs add react react-v1
 
 # 从名为 'other-repo' 的仓库添加 'react' 规则，并命名为 'react-v2'
 crs add react react-v2 -t other-repo
+
+# 直接从 Git URL 添加 'react' 规则
+crs add react -t https://github.com/user/rules-repo.git
 ```
 
-此命令还会自动创建或更新项目根目录下的 `cursor-rules.json` 文件，用于跟踪规则依赖。
+此命令还会自动创建或更新项目根目录下的 `cursor-rules.json` (或 `cursor-rules.local.json`) 文件，用于跟踪规则依赖。
+
+### 移除规则
+
+```bash
+crs remove [alias]
+```
+
+该命令会删除软链接、`.gitignore` 中的条目，并从 `cursor-rules.json` (或 `cursor-rules.local.json`) 中移除依赖。
 
 ### cursor-rules.json 结构
 
@@ -83,6 +104,10 @@ crs add react react-v2 -t other-repo
   }
 }
 ```
+
+### 本地/私有规则
+
+你可以使用 `cursor-rules.local.json` 来添加不需要提交到 Git 的私有规则。该文件结构与 `cursor-rules.json` 相同，其中的规则会与主配置合并（本地规则优先级更高）。
 
 ### 一键安装所有规则
 

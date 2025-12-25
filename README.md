@@ -1,5 +1,9 @@
 # Cursor Rules Sync
 
+[![Npm](https://badgen.net/npm/v/cursor-rules-sync)](https://www.npmjs.com/package/cursor-rules-sync)
+[![License](https://img.shields.io/github/license/lbb00/cursor-rules-sync.svg)](https://github.com/lbb00/cursor-rules-sync/blob/master/LICENSE)
+[![Npm download](https://img.shields.io/npm/dw/cursor-rules-sync.svg)](https://www.npmjs.com/package/cursor-rules-sync)
+
 [English](./README.md) | [中文](./README_ZH.md)
 
 This project is used by symbolic link to sync cursor rules from one git repository to any project.
@@ -18,7 +22,7 @@ npm install -g cursor-rules-sync
 
 All commands support the following global options:
 
-- `-t, --target <repo>`: Specify the target rule repository to use.
+- `-t, --target <repo>`: Specify the target rule repository to use (name or URL).
 
 ## Commands
 
@@ -48,6 +52,16 @@ It will generate a symbolic link form the cursor rules git repository `rules/[ru
 
 If you provide an `[alias]`, it will be linked to `.cursor/rules/[alias]`. This is useful for renaming rules or handling conflicts.
 
+**Adding Private Rules:**
+
+Use the `-l` or `--local` flag to add a rule to `cursor-rules.local.json` instead of `cursor-rules.json`. This is useful for rules that you don't want to commit to git.
+
+```bash
+crs add react --local
+```
+
+This command will also automatically add `cursor-rules.local.json` to your `.gitignore` file.
+
 Examples:
 
 ```bash
@@ -59,9 +73,20 @@ crs add react react-v1
 
 # Add 'react' rule from a specific repo as 'react-v2'
 crs add react react-v2 -t other-repo
+
+# Add 'react' rule directly from a Git URL
+crs add react -t https://github.com/user/rules-repo.git
 ```
 
-It also creates or updates `cursor-rules.json` in your project root to track dependencies.
+It also creates or updates `cursor-rules.json` (or `cursor-rules.local.json`) in your project root to track dependencies.
+
+### Remove a cursor rule
+
+```bash
+crs remove [alias]
+```
+
+This command removes the symbolic link, the ignore entry, and the dependency from `cursor-rules.json` (or `cursor-rules.local.json`).
 
 ### cursor-rules.json structure
 
@@ -72,12 +97,16 @@ The `cursor-rules.json` file uses a `rules` object to map rule names to git repo
   "rules": {
     "react": "https://github.com/user/repo.git",
     "react-v2": {
-        "url": "https://github.com/user/another-repo.git",
-        "rule": "react"
+      "url": "https://github.com/user/another-repo.git",
+      "rule": "react"
     }
   }
 }
 ```
+
+### Local/Private Rules
+
+You can use `cursor-rules.local.json` to add private rules that are not committed to git. This file uses the same structure as `cursor-rules.json` and its rules are merged with the main configuration (local rules take precedence).
 
 ### Install rules from configuration
 
