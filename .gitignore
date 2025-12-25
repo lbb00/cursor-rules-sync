@@ -3,3 +3,4 @@ node_modules
 
 # Local Cursor Rules Config
 cursor-rules.local.json
+dist
