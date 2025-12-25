@@ -27,7 +27,14 @@ npm install -g cursor-rules-sync
 
 ## Create a new cursor rules git repository
 
-- `rules` folder is the root folder for cursor rules.
+- `rules` folder is the default root folder for cursor rules.
+- To use a different folder (e.g., `packages/rules`), add a `cursor-rules.json` file to the root of your repository:
+
+  ```json
+  {
+    "rootPath": "packages/rules"
+  }
+  ```
 
 ## Global Options
 

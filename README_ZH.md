@@ -23,7 +23,14 @@ npm install -g cursor-rules-sync
 
 ## 创建新的 Cursor 规则 Git 仓库
 
-- `rules` 文件夹是存放 Cursor 规则的根目录。
+- `rules` 文件夹是默认的存放 Cursor 规则的根目录。
+- 也可以通过在仓库根目录添加 `cursor-rules.json` 文件来指定其他目录（例如 `packages/rules`）：
+
+  ```json
+  {
+    "rootPath": "packages/rules"
+  }
+  ```
 - 你可以在该目录下创建任意数量的规则文件夹。
 
 ## 全局选项

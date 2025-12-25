@@ -3,10 +3,16 @@ import path from 'path';
 import chalk from 'chalk';
 import { RepoConfig } from './config.js';
 import { addIgnoreEntry, removeIgnoreEntry } from './utils.js';
+import { getProjectConfig } from './project-config.js';
 
 export async function linkRule(projectPath: string, ruleName: string, repo: RepoConfig, alias?: string, isLocal: boolean = false) {
     const repoDir = repo.path;
-    const sourceRulePath = path.join(repoDir, 'rules', ruleName);
+
+    // Determine root path: repo internal config > default
+    const repoConfig = await getProjectConfig(repoDir);
+    const rootPath = repoConfig.rootPath || 'rules';
+
+    const sourceRulePath = path.join(repoDir, rootPath, ruleName);
 
     if (!await fs.pathExists(sourceRulePath)) {
         throw new Error(`Rule "${ruleName}" not found in repository "${repo.name}".`);

@@ -21,6 +21,7 @@
 - **Use**: `crs use <url|name>` - Configure or switch the active rules repository.
   - Supports auto-naming from URL.
   - Caches repositories locally.
+  - **Auto-configuration**: Detects `cursor-rules.json` in the repository root to configure behavior (e.g., `rootPath`).
 - **List**: `crs list` - Show configured repositories and the active one.
 - **Git Proxy**: `crs git <args...>` - Run git commands directly in the active rules repository context.
   - Supports `-t <repo>` to target specific repositories.
@@ -28,7 +29,8 @@
 ### 2. Rule Synchronization (`crs add`)
 - **Syntax**: `crs add <rule_name> [alias]`
 - **Functionality**:
-  - Links `repo/rules/<rule_name>` to `.cursor/rules/<alias>`.
+  - Links `<repo>/<rootPath>/<rule_name>` to `.cursor/rules/<alias>`.
+    - `rootPath` defaults to `rules`, can be customized by the rules repository via `cursor-rules.json`.
   - Updates `cursor-rules.json`.
   - Updates `.gitignore` to ignore the linked rule path.
 - **Options**:

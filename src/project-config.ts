@@ -7,6 +7,7 @@ const LOCAL_CONFIG_FILENAME = 'cursor-rules.local.json';
 export interface ProjectConfig {
     rules?: Record<string, string | { url: string; rule?: string }>;
     // rules: key is the local alias (target name), value is repo url OR object with url and original rule name
+    rootPath?: string;
 }
 
 async function readConfigFile(filePath: string): Promise<ProjectConfig> {
