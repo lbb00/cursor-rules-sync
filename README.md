@@ -11,6 +11,13 @@
 
 CRS allows you to centrally manage Cursor rules in Git repositories and synchronize them across any number of projects using symbolic links. Say goodbye to copy-pasting `.mdc` files and drifting configurations.
 
+## linkany (internal library)
+
+This repo also contains **`linkany`**, a safety-first symlink + manifest manager extracted from CRS.
+
+- Docs: `src/linkany/README.md`
+- Maintainer notes: `src/linkany/KNOWLEDGE_BASE.md`
+
 ### Why CRS?
 
 - **🧩 Multi-Repository & Decentralized**: Mix and match rules from various sources—company standards, team-specific protocols, or open-source collections—without conflict.

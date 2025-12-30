@@ -4,6 +4,8 @@ import chalk from 'chalk';
 import { RepoConfig } from './config.js';
 import { addIgnoreEntry, removeIgnoreEntry } from './utils.js';
 import { getProjectConfig } from './project-config.js';
+import { applyPlan } from './linkany/core/apply.js';
+import { detectKind, planEnsureLink, planUnlink } from './linkany/core/plan.js';
 
 export async function linkRule(projectPath: string, ruleName: string, repo: RepoConfig, alias?: string, isLocal: boolean = false) {
     const repoDir = repo.path;
@@ -26,20 +28,28 @@ export async function linkRule(projectPath: string, ruleName: string, repo: Repo
     // Create .cursor/rules directory if not exists
     await fs.ensureDir(targetDir);
 
-    // Create symlink
-    if (await fs.pathExists(targetRulePath)) {
-        const stats = await fs.lstat(targetRulePath);
-        if (stats.isSymbolicLink()) {
-            console.log(chalk.yellow(`Rule "${targetName}" already linked. Re-linking...`));
-            await fs.remove(targetRulePath);
-        } else {
-            console.log(chalk.yellow(`Warning: "${targetRulePath}" exists and is not a symlink. Skipping to avoid data loss.`));
-            return;
-        }
+    const kind = await detectKind(sourceRulePath);
+    const { steps, reason } = await planEnsureLink({
+        sourceAbs: sourceRulePath,
+        targetAbs: targetRulePath,
+        kind,
+        atomic: true
+    });
+
+    if (reason === 'conflict') {
+        console.log(chalk.yellow(`Warning: "${targetRulePath}" exists and is not a symlink. Skipping to avoid data loss.`));
+        return;
     }
 
-    await fs.ensureSymlink(sourceRulePath, targetRulePath);
-    console.log(chalk.green(`Linked rule "${ruleName}" to project as "${targetName}".`));
+    if (reason === 'noop') {
+        console.log(chalk.gray(`Rule "${targetName}" already linked.`));
+    } else {
+        const res = await applyPlan('install', steps);
+        if (!res.ok) {
+            throw new Error(res.errors.join('; ') || `Failed to link "${targetName}".`);
+        }
+        console.log(chalk.green(`Linked rule "${ruleName}" to project as "${targetName}".`));
+    }
 
     const ignoreEntry = `.cursor/rules/${targetName}`;
 
@@ -80,12 +90,18 @@ export async function unlinkRule(projectPath: string, alias: string) {
     const targetDir = path.join(absoluteProjectPath, '.cursor', 'rules');
     const targetRulePath = path.join(targetDir, alias);
 
-    // Remove symlink/file
-    if (await fs.pathExists(targetRulePath)) {
-        await fs.remove(targetRulePath);
-        console.log(chalk.green(`Removed rule "${alias}" from project.`));
+    // Remove symlink safely (never delete a real directory/file)
+    const steps = await planUnlink({ targetAbs: targetRulePath });
+    const res = await applyPlan('uninstall', steps);
+    if (res.ok) {
+        const removed = res.changes.some(c => c.action === 'unlink' && c.target === targetRulePath);
+        if (removed) {
+            console.log(chalk.green(`Removed rule "${alias}" from project.`));
+        } else {
+            console.log(chalk.yellow(`Rule "${alias}" not found in project (or not a symlink).`));
+        }
     } else {
-        console.log(chalk.yellow(`Rule "${alias}" not found in project.`));
+        throw new Error(res.errors.join('; ') || `Failed to remove "${alias}".`);
     }
 
     // Handle ignore file - Try to remove from BOTH .gitignore and .git/info/exclude
