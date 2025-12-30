@@ -21,6 +21,7 @@ function defaultLogger(): Logger {
 
 export interface ApplyOptions {
   logger?: Logger
+  dryRun?: boolean
 }
 
 export async function applyPlan(operation: Result['operation'], steps: Step[], opts: ApplyOptions = {}): Promise<Result> {
@@ -43,6 +44,11 @@ export async function applyPlan(operation: Result['operation'], steps: Step[], o
   for (const s of steps) {
     const step: Step = { ...s, status: 'planned' }
     try {
+      if (opts.dryRun && s.kind !== 'noop') {
+        step.status = 'skipped'
+        result.steps.push(step)
+        continue
+      }
       switch (s.kind) {
         case 'noop':
           step.status = 'skipped'
@@ -80,6 +86,7 @@ export async function applyPlan(operation: Result['operation'], steps: Step[], o
           await createSymlink(source, target, kind)
           step.status = 'executed'
           result.changes.push({ action: 'symlink', source, target })
+          step.undo = { kind: 'unlink', message: 'Rollback: remove created symlink', paths: { target } }
           break
         }
         case 'unlink': {
@@ -105,6 +112,7 @@ export async function applyPlan(operation: Result['operation'], steps: Step[], o
           await renameAtomic(from, to)
           step.status = 'executed'
           result.changes.push({ action: 'move', source: from, target: to })
+          step.undo = step.undo ?? { kind: 'move', message: 'Rollback: move back', paths: { from: to, to: from } }
           break
         }
         case 'copy': {
@@ -143,6 +151,12 @@ export async function applyPlan(operation: Result['operation'], steps: Step[], o
       break
     }
   }
+
+  // Build a best-effort rollback plan in reverse execution order.
+  result.rollbackSteps = result.steps
+    .filter(s => s.status === 'executed' && s.undo)
+    .map(s => s.undo!)
+    .reverse()
 
   result.finishedAt = nowIso()
   result.durationMs = durationMs(startTs)

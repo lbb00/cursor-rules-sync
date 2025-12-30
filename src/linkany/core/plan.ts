@@ -1,7 +1,7 @@
-import fs from 'fs-extra'
 import path from 'path'
 
 import { LinkKind, Step } from '../types.js'
+import { FS, nodeFS } from './fs.js'
 
 export interface EnsureSourceSpec {
   sourceAbs: string
@@ -39,12 +39,20 @@ export function backupPathForTarget(targetAbs: string) {
 }
 
 export async function detectKind(p: string): Promise<LinkKind> {
+  return detectKindWithFS(nodeFS, p)
+}
+
+export async function detectKindWithFS(fs: FS, p: string): Promise<LinkKind> {
   const st = await fs.lstat(p)
   if (st.isDirectory()) return 'dir'
   return 'file'
 }
 
 export async function isSymlinkTo(targetAbs: string, sourceAbs: string): Promise<boolean> {
+  return isSymlinkToWithFS(nodeFS, targetAbs, sourceAbs)
+}
+
+export async function isSymlinkToWithFS(fs: FS, targetAbs: string, sourceAbs: string): Promise<boolean> {
   try {
     const st = await fs.lstat(targetAbs)
     if (!st.isSymbolicLink()) return false
@@ -57,6 +65,10 @@ export async function isSymlinkTo(targetAbs: string, sourceAbs: string): Promise
 }
 
 export async function planEnsureSource(spec: EnsureSourceSpec): Promise<Step[]> {
+  return planEnsureSourceWithFS(nodeFS, spec)
+}
+
+export async function planEnsureSourceWithFS(fs: FS, spec: EnsureSourceSpec): Promise<Step[]> {
   const steps: Step[] = []
   if (await fs.pathExists(spec.sourceAbs)) return steps
 
@@ -83,9 +95,13 @@ export async function planEnsureSource(spec: EnsureSourceSpec): Promise<Step[]> 
 }
 
 export async function planEnsureLink(spec: EnsureLinkSpec): Promise<{ steps: Step[]; reason: 'noop' | 'create' | 'replace_symlink' | 'conflict' }> {
+  return planEnsureLinkWithFS(nodeFS, spec)
+}
+
+export async function planEnsureLinkWithFS(fs: FS, spec: EnsureLinkSpec): Promise<{ steps: Step[]; reason: 'noop' | 'create' | 'replace_symlink' | 'conflict' }> {
   const steps: Step[] = []
 
-  if (await isSymlinkTo(spec.targetAbs, spec.sourceAbs)) {
+  if (await isSymlinkToWithFS(fs, spec.targetAbs, spec.sourceAbs)) {
     return { steps, reason: 'noop' }
   }
 
@@ -128,6 +144,10 @@ export async function planEnsureLink(spec: EnsureLinkSpec): Promise<{ steps: Ste
 }
 
 export async function planUnlink(spec: UnlinkSpec): Promise<Step[]> {
+  return planUnlinkWithFS(nodeFS, spec)
+}
+
+export async function planUnlinkWithFS(fs: FS, spec: UnlinkSpec): Promise<Step[]> {
   const steps: Step[] = []
   if (!await fs.pathExists(spec.targetAbs)) return steps
   const st = await fs.lstat(spec.targetAbs)

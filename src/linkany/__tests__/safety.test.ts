@@ -1,21 +1,23 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest'
 import fs from 'fs-extra'
 
-import { add, install } from '../../src/linkany/api/index.js'
+import { add } from '../api/add.js'
+import { install } from '../api/install.js'
+import { remove } from '../api/remove.js'
 
 vi.mock('fs-extra')
 
-describe('linkany', () => {
+describe('linkany safety (minimal)', () => {
   beforeEach(() => {
     vi.resetAllMocks()
-    vi.mocked(fs.ensureDir).mockResolvedValue(undefined)
+    vi.mocked(fs.ensureDir).mockResolvedValue(undefined as any)
     vi.mocked(fs.appendFile).mockResolvedValue(undefined as any)
     vi.mocked(fs.readJson).mockResolvedValue({ version: 1, installs: [] } as any)
     vi.mocked(fs.writeFile).mockResolvedValue(undefined as any)
     vi.mocked(fs.rename).mockResolvedValue(undefined as any)
   })
 
-  it('add should refuse when source and target both exist and not already linked', async () => {
+  it('add refuses when source and target both exist (not already linked)', async () => {
     vi.mocked(fs.pathExists).mockResolvedValue(true)
     vi.mocked(fs.lstat).mockResolvedValue({ isSymbolicLink: () => false, isDirectory: () => false } as any)
 
@@ -24,7 +26,7 @@ describe('linkany', () => {
     expect(res.errors[0]).toMatch(/source and target both exist/i)
   })
 
-  it('install should abort when target exists and is not a symlink', async () => {
+  it('install aborts if target exists and is not a symlink', async () => {
     vi.mocked(fs.readJson).mockResolvedValue({ version: 1, installs: [{ source: '/s', target: '/t' }] } as any)
     vi.mocked(fs.pathExists).mockImplementation(async (p) => {
       if (p === '/m.json') return true
@@ -42,6 +44,17 @@ describe('linkany', () => {
     expect(res.ok).toBe(false)
     expect(res.errors[0]).toMatch(/target exists and is not a symlink/i)
     expect(fs.symlink).not.toHaveBeenCalled()
+  })
+
+  it('remove with dryRun does not unlink', async () => {
+    vi.mocked(fs.readJson).mockResolvedValue({ version: 1, installs: [{ source: '/s', target: '/t' }] } as any)
+    vi.mocked(fs.pathExists).mockResolvedValue(true)
+    vi.mocked(fs.lstat).mockResolvedValue({ isSymbolicLink: () => true } as any)
+    vi.mocked(fs.readlink).mockResolvedValue('/s' as any)
+
+    const res = await remove('/m.json', '/t', { dryRun: true })
+    expect(res.ok).toBe(true)
+    expect(fs.unlink).not.toHaveBeenCalled()
   })
 })
 

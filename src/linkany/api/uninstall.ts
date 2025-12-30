@@ -1,5 +1,4 @@
-import { applyPlan } from '../core/apply.js'
-import { tryAppendAuditStep } from '../core/audit.js'
+import { runOperation } from '../core/runner.js'
 import { planUnlink } from '../core/plan.js'
 import { getManifestBaseDir, loadManifest, resolveEntry } from '../manifest/types.js'
 import { CommonOptions, Result, Step } from '../types.js'
@@ -12,9 +11,6 @@ function mkLogger(opts?: CommonOptions) {
  * Remove all target symlinks listed in manifest. Never deletes sources.
  */
 export async function uninstall(manifestPath: string, opts?: CommonOptions): Promise<Result> {
-  const started = Date.now()
-  const logger = mkLogger(opts)
-
   const manifest = await loadManifest(manifestPath)
   const baseDir = getManifestBaseDir(manifestPath)
 
@@ -24,12 +20,12 @@ export async function uninstall(manifestPath: string, opts?: CommonOptions): Pro
     allSteps.push(...await planUnlink({ targetAbs: r.targetAbs }))
   }
 
-  let res = await applyPlan('uninstall', allSteps, { logger })
-  res.manifestPath = manifestPath
-  res.durationMs = Date.now() - started
-  res = await tryAppendAuditStep(res, manifestPath, opts)
-  logger?.info?.(`[linkany] uninstall ${res.ok ? 'ok' : 'fail'} (${res.durationMs}ms)`)
-  return res
+  return await runOperation({
+    operation: 'uninstall',
+    manifestPath,
+    steps: allSteps,
+    opts,
+  })
 }
 
 

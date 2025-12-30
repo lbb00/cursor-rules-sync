@@ -19,8 +19,14 @@
   - `add`：当 `source` 和 `target` 同时存在（且 `target` 不是指向 `source` 的 symlink）时 **拒绝**。
   - `remove/uninstall`：只会删除 `target` 的 symlink，**绝不删除 source**。
   - `install`：如果发现某个 `target` 存在但不是 symlink，会 **整体 abort**，避免误伤真实文件/目录。
-- **原子性（尽力而为）**：创建 symlink 时使用 `target.tmp.<rand>`，再 `rename` 到位，避免中途失败留下半成品。
+- **原子性（尽力而为）**：
+  - 创建/替换 symlink 时优先使用 `target.tmp.<rand>`，再 `rename` 到位。
+  - 替换已有 symlink 时会优先把旧 target 移到 `target.bak.<timestamp>.<rand>`（便于恢复）。
 - **审计记录（有记录的）**：每次调用都会把 `Result` 追加写入 JSONL 文件，默认路径为 `${manifestPath}.log.jsonl`。
+- **dry-run / plan 输出**：
+  - `opts.dryRun=true` 时不触发任何文件系统写操作（不 symlink/rename/unlink），只返回计划与结果结构。
+  - `opts.includePlanText=true` 时会在 `Result.planText` 中附带可读的 plan 文本。
+- **rollback 协议（best-effort）**：`Result.rollbackSteps` 会尽力给出“可逆步骤”的回滚计划（例如 move/symlink 的逆操作）。目前是协议与数据结构，未提供一键 rollback API。
 
 ## Manifest 格式（v1）
 
@@ -90,12 +96,21 @@
 - 每行是一条 JSON（完整 `Result`），包含：执行步骤、错误、耗时、变更摘要。
 - 可通过 `opts.auditLogPath` 指定自定义路径。
 
+## Options（opts）
+
+适用于四个 API 的通用 options（`CommonOptions`）：
+
+- `auditLogPath?: string`：覆盖默认审计日志路径。
+- `dryRun?: boolean`：只返回计划/结果，不写文件系统。
+- `includePlanText?: boolean`：在 `Result.planText` 中包含可读 plan 文本。
+- `logger?: { info/warn/error }`：注入日志实现（可选）。
+
 ## 目录结构（维护者）
 
 ```text
 src/linkany/
   api/        # 4 个对外操作，分别一个文件
-  core/       # 执行引擎：plan/apply/fs/audit
+  core/       # 执行引擎：plan/apply/fs/audit/runner/backup
   manifest/   # manifest 类型与读写（写回保持未知字段）
   index.ts    # 对外统一导出
   types.ts    # 公共类型（Result/Step/Options）

@@ -1,8 +1,8 @@
 import fs from 'fs-extra'
 import path from 'path'
 
-import { applyPlan } from '../core/apply.js'
-import { tryAppendAuditStep } from '../core/audit.js'
+import { planReplaceTargetWithTmp } from '../core/backup.js'
+import { runOperation } from '../core/runner.js'
 import { detectKind, isSymlinkTo, tmpPathForTarget } from '../core/plan.js'
 import { getManifestBaseDir, loadManifest, resolveEntry } from '../manifest/types.js'
 import { CommonOptions, LinkKind, Result, Step } from '../types.js'
@@ -43,10 +43,8 @@ function linkSteps(sourceAbs: string, targetAbs: string, kind: LinkKind, atomic:
  * Safety: if any target exists and is not a symlink, abort without changes.
  */
 export async function install(manifestPath: string, opts?: CommonOptions): Promise<Result> {
-  const started = Date.now()
   const logger = mkLogger(opts)
-
-  let result = await (async (): Promise<Result> => {
+  const result = await (async (): Promise<Result> => {
     const manifest = await loadManifest(manifestPath)
     const baseDir = getManifestBaseDir(manifestPath)
 
@@ -79,19 +77,24 @@ export async function install(manifestPath: string, opts?: CommonOptions): Promi
       if (await isSymlinkTo(r.targetAbs, r.sourceAbs)) continue
 
       if (targetExists) {
-        allSteps.push({ kind: 'unlink', message: 'Remove existing target symlink before linking', paths: { target: r.targetAbs } })
+        // Stronger atomic replace: move old target aside to backup, then replace with tmp.
+        if (r.atomic) {
+          const { steps: replaceSteps } = planReplaceTargetWithTmp({ targetAbs: r.targetAbs, atomic: true })
+          allSteps.push(...replaceSteps.slice(0, 1)) // move target -> backup
+        } else {
+          allSteps.push({ kind: 'unlink', message: 'Remove existing target symlink before linking', paths: { target: r.targetAbs } })
+        }
       }
       allSteps.push(...linkSteps(r.sourceAbs, r.targetAbs, kind, r.atomic))
     }
 
-    const res = await applyPlan('install', allSteps, { logger })
-    res.manifestPath = manifestPath
-    return res
+    return await runOperation({
+      operation: 'install',
+      manifestPath,
+      steps: allSteps,
+      opts,
+    })
   })()
-
-  result.durationMs = Date.now() - started
-  result = await tryAppendAuditStep(result, manifestPath, opts)
-  logger?.info?.(`[linkany] install ${result.ok ? 'ok' : 'fail'} (${result.durationMs}ms)`)
   return result
 }
 

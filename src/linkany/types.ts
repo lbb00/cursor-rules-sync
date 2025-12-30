@@ -29,6 +29,11 @@ export interface Step {
    * Optional error message for failed steps.
    */
   error?: string
+  /**
+   * Optional rollback hint for this step (protocol only; may be partial).
+   * If present and the step was executed, a future rollback can apply this.
+   */
+  undo?: Omit<Step, 'status' | 'error' | 'undo'>
 }
 
 export interface Result {
@@ -45,6 +50,14 @@ export interface Result {
    * Summary of changes that occurred.
    */
   changes: Array<{ target?: string; source?: string; action: string }>
+  /**
+   * Optional rollback plan (best-effort) in reverse order of execution.
+   */
+  rollbackSteps?: Step[]
+  /**
+   * Optional human-readable plan / summary text (best-effort).
+   */
+  planText?: string
 }
 
 export interface Logger {
@@ -60,6 +73,14 @@ export interface CommonOptions {
    */
   auditLogPath?: string
   logger?: Logger
+  /**
+   * If true, do not perform filesystem writes; only return the planned steps/result.
+   */
+  dryRun?: boolean
+  /**
+   * If true, return plan text in Result.planText (best-effort).
+   */
+  includePlanText?: boolean
 }
 
 

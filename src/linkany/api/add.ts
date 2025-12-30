@@ -1,9 +1,9 @@
 import fs from 'fs-extra'
 import path from 'path'
 
-import { applyPlan } from '../core/apply.js'
-import { tryAppendAuditStep } from '../core/audit.js'
-import { backupPathForTarget, detectKind, isSymlinkTo, planCopy, planEnsureSource, planUnlink, tmpPathForTarget } from '../core/plan.js'
+import { runOperation } from '../core/runner.js'
+import { planReplaceTargetWithTmp } from '../core/backup.js'
+import { detectKind, isSymlinkTo, planCopy, planEnsureSource, planUnlink, tmpPathForTarget } from '../core/plan.js'
 import { getManifestBaseDir } from '../manifest/types.js'
 import { loadOrCreateManifest, saveManifest, upsertEntry } from '../manifest/io.js'
 import { CommonOptions, LinkKind, Result, Step } from '../types.js'
@@ -56,8 +56,6 @@ function linkSteps(sourceAbs: string, targetAbs: string, kind: LinkKind, atomic:
  * - If symlink creation fails => error (no copy fallback).
  */
 export async function add(manifestPath: string, mapping: Mapping, opts?: CommonOptions): Promise<Result> {
-  const started = Date.now()
-  const logger = mkLogger(opts)
   const baseDir = getManifestBaseDir(manifestPath)
 
   const sourceAbs = path.isAbsolute(mapping.source) ? mapping.source : path.resolve(baseDir, mapping.source)
@@ -70,21 +68,24 @@ export async function add(manifestPath: string, mapping: Mapping, opts?: CommonO
     const manifest = await loadOrCreateManifest(manifestPath)
     upsertEntry(manifest, { source: mapping.source, target: mapping.target, kind: mapping.kind as any, atomic: mapping.atomic })
     await saveManifest(manifestPath, manifest)
-    let res = mkResult('add', manifestPath)
-    res.steps.push({ kind: 'write_manifest', message: 'Update manifest', status: 'executed', paths: { file: path.resolve(manifestPath) } })
-    res.changes.push({ action: 'manifest_upsert', source: sourceAbs, target: targetAbs })
-    res.durationMs = Date.now() - started
-    res = await tryAppendAuditStep(res, manifestPath, opts)
-    return res
+    return await runOperation({
+      operation: 'add',
+      manifestPath,
+      steps: [],
+      opts,
+      finalize: async (res) => {
+        res.steps.push({ kind: 'write_manifest', message: 'Update manifest', status: 'executed', paths: { file: path.resolve(manifestPath) } })
+        res.changes.push({ action: 'manifest_upsert', source: sourceAbs, target: targetAbs })
+        return res
+      },
+    })
   }
 
   if (sourceExists && targetExists) {
-    let res = mkResult('add', manifestPath)
+    const res = mkResult('add', manifestPath)
     res.ok = false
     res.errors.push(`Refusing to proceed: source and target both exist: source=${sourceAbs} target=${targetAbs}`)
     res.steps.push({ kind: 'noop', message: 'Safety refusal', status: 'failed', error: res.errors[0] })
-    res.durationMs = Date.now() - started
-    res = await tryAppendAuditStep(res, manifestPath, opts)
     return res
   }
 
@@ -96,8 +97,6 @@ export async function add(manifestPath: string, mapping: Mapping, opts?: CommonO
       res.ok = false
       res.errors.push(`Refusing to migrate: target is an existing symlink: ${targetAbs}`)
       res.steps.push({ kind: 'noop', message: 'Safety refusal', status: 'failed', error: res.errors[0] })
-      res.durationMs = Date.now() - started
-      res = await tryAppendAuditStep(res, manifestPath, opts)
       return res
     }
     kind = st.isDirectory() ? 'dir' : 'file'
@@ -110,9 +109,10 @@ export async function add(manifestPath: string, mapping: Mapping, opts?: CommonO
 
   if (!sourceExists && targetExists) {
     steps.push(...await planCopy({ fromAbs: targetAbs, toAbs: sourceAbs, kind, atomic }))
-    const backupAbs = backupPathForTarget(targetAbs)
-    steps.push({ kind: 'move', message: 'Move original target aside to backup before linking', paths: { from: targetAbs, to: backupAbs } })
-    steps.push(...linkSteps(sourceAbs, targetAbs, kind, atomic))
+    // Move original target to backup, then put symlink into place.
+    const { tmpAbs, steps: replaceSteps } = planReplaceTargetWithTmp({ targetAbs, atomic: true })
+    steps.push(...replaceSteps.slice(0, 1)) // move target -> backup
+    steps.push(...linkSteps(sourceAbs, targetAbs, kind, atomic)) // creates tmp + move tmp -> target
   } else {
     steps.push(...await planEnsureSource({ sourceAbs, kind }))
     if (targetExists) {
@@ -121,31 +121,29 @@ export async function add(manifestPath: string, mapping: Mapping, opts?: CommonO
     steps.push(...linkSteps(sourceAbs, targetAbs, kind, atomic))
   }
 
-  let fsRes = await applyPlan('add', steps, { logger })
-  fsRes.manifestPath = manifestPath
-  fsRes.durationMs = Date.now() - started
-
-  if (!fsRes.ok) {
-    fsRes = await tryAppendAuditStep(fsRes, manifestPath, opts)
-    return fsRes
-  }
-
   const manifest = await loadOrCreateManifest(manifestPath)
   upsertEntry(manifest, { source: mapping.source, target: mapping.target, kind: kind as any, atomic })
-  try {
-    await saveManifest(manifestPath, manifest)
-    fsRes.steps.push({ kind: 'write_manifest', message: 'Update manifest', status: 'executed', paths: { file: path.resolve(manifestPath) } })
-    fsRes.changes.push({ action: 'manifest_upsert', source: sourceAbs, target: targetAbs })
-  } catch (e: any) {
-    const msg = e?.message ? String(e.message) : String(e)
-    fsRes.ok = false
-    fsRes.errors.push(`Failed to write manifest: ${msg}`)
-    fsRes.steps.push({ kind: 'write_manifest', message: 'Update manifest', status: 'failed', error: msg, paths: { file: path.resolve(manifestPath) } })
-  }
 
-  fsRes = await tryAppendAuditStep(fsRes, manifestPath, opts)
-  logger?.info?.(`[linkany] add ${fsRes.ok ? 'ok' : 'fail'} (${fsRes.durationMs}ms)`)
-  return fsRes
+  return await runOperation({
+    operation: 'add',
+    manifestPath,
+    steps,
+    opts,
+    finalize: async (res) => {
+      if (!res.ok) return res
+      try {
+        await saveManifest(manifestPath, manifest)
+        res.steps.push({ kind: 'write_manifest', message: 'Update manifest', status: 'executed', paths: { file: path.resolve(manifestPath) } })
+        res.changes.push({ action: 'manifest_upsert', source: sourceAbs, target: targetAbs })
+      } catch (e: any) {
+        const msg = e?.message ? String(e.message) : String(e)
+        res.ok = false
+        res.errors.push(`Failed to write manifest: ${msg}`)
+        res.steps.push({ kind: 'write_manifest', message: 'Update manifest', status: 'failed', error: msg, paths: { file: path.resolve(manifestPath) } })
+      }
+      return res
+    },
+  })
 }
 
 
