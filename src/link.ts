@@ -4,8 +4,13 @@ import chalk from 'chalk';
 import { RepoConfig } from './config.js';
 import { addIgnoreEntry, removeIgnoreEntry } from './utils.js';
 import { getProjectConfig } from './project-config.js';
-import { applyPlan } from './linkany/core/apply.js';
-import { detectKind, planEnsureLink, planUnlink } from './linkany/core/plan.js';
+import {
+    install as linkanyInstall,
+    remove as linkanyRemove,
+    loadOrCreateManifest,
+    saveManifest,
+    upsertEntry,
+} from 'linkany';
 
 export async function linkRule(projectPath: string, ruleName: string, repo: RepoConfig, alias?: string, isLocal: boolean = false) {
     const repoDir = repo.path;
@@ -28,27 +33,41 @@ export async function linkRule(projectPath: string, ruleName: string, repo: Repo
     // Create .cursor/rules directory if not exists
     await fs.ensureDir(targetDir);
 
-    const kind = await detectKind(sourceRulePath);
-    const { steps, reason } = await planEnsureLink({
-        sourceAbs: sourceRulePath,
-        targetAbs: targetRulePath,
-        kind,
-        atomic: true
-    });
+    // linkany is a standalone package now; CRS uses it to do safe symlink convergence.
+    // We keep a small manifest in the project root (gitignored) to enable linkany's API.
+    const manifestPath = path.join(absoluteProjectPath, '.cursor-rules-sync.linkany.json');
 
-    if (reason === 'conflict') {
-        console.log(chalk.yellow(`Warning: "${targetRulePath}" exists and is not a symlink. Skipping to avoid data loss.`));
-        return;
+    // Ensure manifest is gitignored (it's tool-internal; no need to commit)
+    try {
+        await fs.ensureFile(path.join(absoluteProjectPath, '.gitignore'));
+        await addIgnoreEntry(path.join(absoluteProjectPath, '.gitignore'), '.cursor-rules-sync.linkany.json', '# Cursor Rules Sync');
+    } catch {
+        // best-effort; ignore if we can't write .gitignore
     }
 
-    if (reason === 'noop') {
-        console.log(chalk.gray(`Rule "${targetName}" already linked.`));
-    } else {
-        const res = await applyPlan('install', steps);
-        if (!res.ok) {
-            throw new Error(res.errors.join('; ') || `Failed to link "${targetName}".`);
+    // 1) Update manifest (so we can re-install / replace existing symlink safely)
+    const manifest = await loadOrCreateManifest(manifestPath);
+    upsertEntry(manifest, { source: sourceRulePath, target: targetRulePath, atomic: true });
+    await saveManifest(manifestPath, manifest);
+
+    // 2) Converge filesystem state according to manifest
+    const res = await linkanyInstall(manifestPath);
+
+    if (!res.ok) {
+        const errText = res.errors.join('; ');
+        // install() emits a clear conflict error when target exists and isn't a symlink
+        if (res.errors.some(e => e.toLowerCase().includes('conflict: target exists and is not a symlink'))) {
+            console.log(chalk.yellow(`Warning: "${targetRulePath}" exists and is not a symlink. Skipping to avoid data loss.`));
+            return;
         }
+        throw new Error(errText || `Failed to link "${targetName}".`);
+    }
+
+    const changed = res.changes.some(c => c.action === 'symlink' || c.action === 'move' || c.action === 'unlink');
+    if (changed) {
         console.log(chalk.green(`Linked rule "${ruleName}" to project as "${targetName}".`));
+    } else {
+        console.log(chalk.gray(`Rule "${targetName}" already linked.`));
     }
 
     const ignoreEntry = `.cursor/rules/${targetName}`;
@@ -90,18 +109,37 @@ export async function unlinkRule(projectPath: string, alias: string) {
     const targetDir = path.join(absoluteProjectPath, '.cursor', 'rules');
     const targetRulePath = path.join(targetDir, alias);
 
-    // Remove symlink safely (never delete a real directory/file)
-    const steps = await planUnlink({ targetAbs: targetRulePath });
-    const res = await applyPlan('uninstall', steps);
-    if (res.ok) {
-        const removed = res.changes.some(c => c.action === 'unlink' && c.target === targetRulePath);
-        if (removed) {
-            console.log(chalk.green(`Removed rule "${alias}" from project.`));
+    const manifestPath = path.join(absoluteProjectPath, '.cursor-rules-sync.linkany.json');
+
+    // Try linkany-based removal first (manifest-backed). If manifest is missing or entry isn't found,
+    // fall back to a safe unlink that never deletes real files/dirs.
+    let removed = false;
+    if (await fs.pathExists(manifestPath)) {
+        const res = await linkanyRemove(manifestPath, targetRulePath);
+        if (res.ok) {
+            removed = res.changes.some(c => c.action === 'unlink' && c.target === targetRulePath);
         } else {
-            console.log(chalk.yellow(`Rule "${alias}" not found in project (or not a symlink).`));
+            // ignore "Entry not found" and fall through to safe unlink
+            if (!res.errors.some(e => e.toLowerCase().includes('entry not found'))) {
+                throw new Error(res.errors.join('; ') || `Failed to remove "${alias}".`);
+            }
         }
+    }
+
+    if (!removed) {
+        if (await fs.pathExists(targetRulePath)) {
+            const st = await fs.lstat(targetRulePath);
+            if (st.isSymbolicLink()) {
+                await fs.unlink(targetRulePath);
+                removed = true;
+            }
+        }
+    }
+
+    if (removed) {
+        console.log(chalk.green(`Removed rule "${alias}" from project.`));
     } else {
-        throw new Error(res.errors.join('; ') || `Failed to remove "${alias}".`);
+        console.log(chalk.yellow(`Rule "${alias}" not found in project (or not a symlink).`));
     }
 
     // Handle ignore file - Try to remove from BOTH .gitignore and .git/info/exclude

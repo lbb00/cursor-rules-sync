@@ -20,6 +20,9 @@ importers:
       fs-extra:
         specifier: ^11.3.3
         version: 11.3.3
+      linkany:
+        specifier: ^0.0.1
+        version: 0.0.1
     devDependencies:
       '@types/fs-extra':
         specifier: ^11.0.4
@@ -451,6 +454,10 @@ packages:
 
   jsonfile@6.2.0:
     resolution: {integrity: sha512-FGuPw30AdOIUTRMC2OMRtQV+jkVj2cfPqSeWXv1NEAJ1qZ5zb1X6z1mFhbfOB/iy3ssJCD+3KuZ8r8C3uVFlAg==}
+
+  linkany@0.0.1:
+    resolution: {integrity: sha512-sUsF7/wTISFF/zHoya4Kh1Q4W1353TnY2wfuWrOvsqKGQPwA2veqG9W9vHTzvovYjLd86e31XZpwzHpWy8kCmA==}
+    hasBin: true
 
   magic-string@0.30.21:
     resolution: {integrity: sha512-vd2F4YUyEXKGcLHoq+TEyCjxueSeHnFxyyjNp80yg0XV4vUhnDer/lvvlqM/arB5bXQN5K2/3oinyCRyx8T2CQ==}
@@ -970,6 +977,10 @@ snapshots:
       universalify: 2.0.1
     optionalDependencies:
       graceful-fs: 4.2.11
+
+  linkany@0.0.1:
+    dependencies:
+      fs-extra: 11.3.3
 
   magic-string@0.30.21:
     dependencies:

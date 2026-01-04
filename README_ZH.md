@@ -15,6 +15,18 @@ CRS 允许您在 Git 仓库中集中管理 Cursor 规则，并通过软链接将
 
 [English](./README.md) | [中文](./README_ZH.md)
 
+## linkany（独立 package）
+
+CRS 使用 **`linkany`**（安全优先的软链接 + manifest 管理器）作为**独立的 npm 包**，不再在本仓库内维护其源码。
+
+- **引入方式**：
+
+```js
+import { add, remove, install, uninstall } from 'linkany';
+```
+
+- **CRS 的使用方式**：在项目根目录维护一个工具内部的 manifest：**`.cursor-rules-sync.linkany.json`**（会自动加入 `.gitignore`）。
+
 ## 安装
 
 ```bash
