@@ -14,6 +14,9 @@
 - **CLI Framework**: Commander.js.
 - **Config**: Stored in `~/.cursor-rules-sync/config.json` (global) and project roots.
 - **Git Operations**: Uses `execa` to run git commands; stores repos in `~/.cursor-rules-sync/repos/`.
+- **Linking Engine**: Uses the standalone npm package **`linkany`** to perform safe symlink convergence.
+  - CRS passes an **in-memory manifest JSON** into `linkany` APIs and routes audit logs to the OS null device, so it **does not create manifest/audit files in the project**.
+  - This replaces the old “vendored/internal linkany source” approach.
 
 ## Feature Summary
 
@@ -33,6 +36,9 @@
     - `rootPath` defaults to `rules`, can be customized by the rules repository via `cursor-rules.json`.
   - Updates `cursor-rules.json`.
   - Updates `.gitignore` to ignore the linked rule path.
+  - Uses `linkany` to ensure the target becomes a symlink safely:
+    - If the target exists and is **not** a symlink, CRS aborts linking to avoid data loss.
+    - If the target is an existing symlink, CRS can replace it to converge to the desired source.
 - **Options**:
   - `-t <repo>`: Specify source repository.
   - `--local` (`-l`): Add as a private rule.
