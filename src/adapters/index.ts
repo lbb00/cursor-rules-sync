@@ -1,10 +1,10 @@
 import { SyncAdapter, AdapterRegistry } from './types.js';
 import { cursorRulesAdapter } from './cursor-rules.js';
-import { cursorPlansAdapter } from './cursor-plans.js';
+import { cursorCommandsAdapter } from './cursor-commands.js';
 import { copilotInstructionsAdapter } from './copilot-instructions.js';
 import { claudeSkillsAdapter } from './claude-skills.js';
 import { claudeAgentsAdapter } from './claude-agents.js';
-import { claudePluginsAdapter } from './claude-plugins.js';
+import { cursorSkillsAdapter } from './cursor-skills.js';
 import { ProjectConfig } from '../project-config.js';
 
 // Re-export types and utilities
@@ -22,11 +22,11 @@ class DefaultAdapterRegistry implements AdapterRegistry {
     constructor() {
         // Register built-in adapters
         this.register(cursorRulesAdapter);
-        this.register(cursorPlansAdapter);
+        this.register(cursorCommandsAdapter);
+        this.register(cursorSkillsAdapter);
         this.register(copilotInstructionsAdapter);
         this.register(claudeSkillsAdapter);
         this.register(claudeAgentsAdapter);
-        this.register(claudePluginsAdapter);
     }
 
     register(adapter: SyncAdapter): void {
@@ -102,8 +102,11 @@ export function findAdapterForAlias(
     if (cfg.cursor?.rules?.[alias]) {
         return { adapter: cursorRulesAdapter, section: 'cursor.rules' };
     }
-    if (cfg.cursor?.plans?.[alias]) {
-        return { adapter: cursorPlansAdapter, section: 'cursor.plans' };
+    if (cfg.cursor?.commands?.[alias]) {
+        return { adapter: cursorCommandsAdapter, section: 'cursor.commands' };
+    }
+    if (cfg.cursor?.skills?.[alias]) {
+        return { adapter: cursorSkillsAdapter, section: 'cursor.skills' };
     }
     if (cfg.copilot?.instructions?.[alias]) {
         return { adapter: copilotInstructionsAdapter, section: 'copilot.instructions' };
@@ -113,9 +116,6 @@ export function findAdapterForAlias(
     }
     if (cfg.claude?.agents?.[alias]) {
         return { adapter: claudeAgentsAdapter, section: 'claude.agents' };
-    }
-    if (cfg.claude?.plugins?.[alias]) {
-        return { adapter: claudePluginsAdapter, section: 'claude.plugins' };
     }
     return null;
 }

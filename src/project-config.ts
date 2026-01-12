@@ -18,8 +18,10 @@ export interface SourceDirConfig {
     cursor?: {
         // Source directory for cursor rules, default: ".cursor/rules"
         rules?: string;
-        // Source directory for cursor plans, default: ".cursor/plans"
-        plans?: string;
+        // Source directory for cursor commands, default: ".cursor/commands"
+        commands?: string;
+        // Source directory for cursor skills, default: ".cursor/skills"
+        skills?: string;
     };
     copilot?: {
         // Source directory for copilot instructions, default: ".github/instructions"
@@ -30,8 +32,6 @@ export interface SourceDirConfig {
         skills?: string;
         // Source directory for claude agents, default: ".claude/agents"
         agents?: string;
-        // Source directory for claude plugins, default: "plugins"
-        plugins?: string;
     };
 }
 
@@ -56,7 +56,8 @@ export interface ProjectConfig {
     cursor?: {
         // key is the local alias (target name), value is repo url OR object with url and original rule name
         rules?: Record<string, RuleEntry>;
-        plans?: Record<string, RuleEntry>;
+        commands?: Record<string, RuleEntry>;
+        skills?: Record<string, RuleEntry>;
     };
     copilot?: {
         // key is the local alias (target name), value is repo url OR object with url and original rule name
@@ -66,7 +67,6 @@ export interface ProjectConfig {
         // key is the local alias (target name), value is repo url OR object with url and original rule name
         skills?: Record<string, RuleEntry>;
         agents?: Record<string, RuleEntry>;
-        plugins?: Record<string, RuleEntry>;
     };
 }
 
@@ -78,7 +78,8 @@ export interface RepoSourceConfig {
     rootPath?: string;
     cursor?: {
         rules?: string;
-        plans?: string;
+        skills?: string;
+        commands?: string;
     };
     copilot?: {
         instructions?: string;
@@ -86,7 +87,6 @@ export interface RepoSourceConfig {
     claude?: {
         skills?: string;
         agents?: string;
-        plugins?: string;
     };
 }
 
@@ -129,15 +129,15 @@ function mergeCombined(main: ProjectConfig, local: ProjectConfig): ProjectConfig
     return {
         cursor: {
             rules: { ...(main.cursor?.rules || {}), ...(local.cursor?.rules || {}) },
-            plans: { ...(main.cursor?.plans || {}), ...(local.cursor?.plans || {}) }
+            commands: { ...(main.cursor?.commands || {}), ...(local.cursor?.commands || {}) },
+            skills: { ...(main.cursor?.skills || {}), ...(local.cursor?.skills || {}) }
         },
         copilot: {
             instructions: { ...(main.copilot?.instructions || {}), ...(local.copilot?.instructions || {}) }
         },
         claude: {
             skills: { ...(main.claude?.skills || {}), ...(local.claude?.skills || {}) },
-            agents: { ...(main.claude?.agents || {}), ...(local.claude?.agents || {}) },
-            plugins: { ...(main.claude?.plugins || {}), ...(local.claude?.plugins || {}) }
+            agents: { ...(main.claude?.agents || {}), ...(local.claude?.agents || {}) }
         }
     };
 }
@@ -168,38 +168,38 @@ export async function getRepoSourceConfig(projectPath: string): Promise<RepoSour
             };
         }
 
-        // Legacy format: cursor.rules/plans/instructions are strings (source dirs)
+        // Legacy format: cursor.rules/commands/instructions are strings (source dirs)
         // We need to detect if this is a rules repo config (string values) vs project config (object values)
         // Check if cursor.rules is a string (rules repo) or object (project dependencies)
         const cursorRules = config.cursor?.rules;
-        const cursorPlans = config.cursor?.plans;
+        const cursorCommands = config.cursor?.commands;
+        const cursorSkills = config.cursor?.skills;
         const copilotInstructions = config.copilot?.instructions;
 
         const isCursorRulesString = typeof cursorRules === 'string';
-        const isCursorPlansString = typeof cursorPlans === 'string';
+        const isCursorCommandsString = typeof cursorCommands === 'string';
+        const isCursorSkillsString = typeof cursorSkills === 'string';
         const isCopilotInstructionsString = typeof copilotInstructions === 'string';
         const claudeSkills = config.claude?.skills;
         const claudeAgents = config.claude?.agents;
-        const claudePlugins = config.claude?.plugins;
         const isClaudeSkillsString = typeof claudeSkills === 'string';
         const isClaudeAgentsString = typeof claudeAgents === 'string';
-        const isClaudePluginsString = typeof claudePlugins === 'string';
 
         // If any of these are strings, treat as legacy rules repo config
-        if (isCursorRulesString || isCursorPlansString || isCopilotInstructionsString || isClaudeSkillsString || isClaudeAgentsString || isClaudePluginsString) {
+        if (isCursorRulesString || isCursorCommandsString || isCursorSkillsString || isCopilotInstructionsString || isClaudeSkillsString || isClaudeAgentsString) {
             return {
                 rootPath: config.rootPath,
                 cursor: {
                     rules: isCursorRulesString ? cursorRules : undefined,
-                    plans: isCursorPlansString ? cursorPlans : undefined
+                    commands: isCursorCommandsString ? cursorCommands : undefined,
+                    skills: isCursorSkillsString ? cursorSkills : undefined
                 },
                 copilot: {
                     instructions: isCopilotInstructionsString ? copilotInstructions : undefined
                 },
                 claude: {
                     skills: isClaudeSkillsString ? claudeSkills : undefined,
-                    agents: isClaudeAgentsString ? claudeAgents : undefined,
-                    plugins: isClaudePluginsString ? claudePlugins : undefined
+                    agents: isClaudeAgentsString ? claudeAgents : undefined
                 }
             };
         }
@@ -229,8 +229,10 @@ export function getSourceDir(
     if (tool === 'cursor') {
         if (subtype === 'rules') {
             toolDir = repoConfig.cursor?.rules;
-        } else if (subtype === 'plans') {
-            toolDir = repoConfig.cursor?.plans;
+        } else if (subtype === 'commands') {
+            toolDir = repoConfig.cursor?.commands;
+        } else if (subtype === 'skills') {
+            toolDir = repoConfig.cursor?.skills;
         }
     } else if (tool === 'copilot') {
         if (subtype === 'instructions') {
@@ -241,8 +243,6 @@ export function getSourceDir(
             toolDir = repoConfig.claude?.skills;
         } else if (subtype === 'agents') {
             toolDir = repoConfig.claude?.agents;
-        } else if (subtype === 'plugins') {
-            toolDir = repoConfig.claude?.plugins;
         }
     }
 
@@ -396,14 +396,24 @@ export async function removeCopilotDependency(projectPath: string, alias: string
     return removeDependencyGeneric(projectPath, ['copilot', 'instructions'], alias);
 }
 
-// ============ Plans support ============
+// ============ Cursor skills support ============
 
-export async function addPlanDependency(projectPath: string, planName: string, repoUrl: string, alias?: string, isLocal: boolean = false): Promise<{ migrated: boolean }> {
-    return addDependencyGeneric(projectPath, ['cursor', 'plans'], planName, repoUrl, alias, isLocal);
+export async function addCursorCommandDependency(projectPath: string, commandName: string, repoUrl: string, alias?: string, isLocal: boolean = false): Promise<{ migrated: boolean }> {
+    return addDependencyGeneric(projectPath, ['cursor', 'commands'], commandName, repoUrl, alias, isLocal);
 }
 
-export async function removePlanDependency(projectPath: string, alias: string): Promise<{ removedFrom: string[]; migrated: boolean }> {
-    return removeDependencyGeneric(projectPath, ['cursor', 'plans'], alias);
+export async function removeCursorCommandDependency(projectPath: string, alias: string): Promise<{ removedFrom: string[]; migrated: boolean }> {
+    return removeDependencyGeneric(projectPath, ['cursor', 'commands'], alias);
+}
+
+// ============ Cursor skills support ============
+
+export async function addCursorSkillDependency(projectPath: string, skillName: string, repoUrl: string, alias?: string, isLocal: boolean = false): Promise<{ migrated: boolean }> {
+    return addDependencyGeneric(projectPath, ['cursor', 'skills'], skillName, repoUrl, alias, isLocal);
+}
+
+export async function removeCursorSkillDependency(projectPath: string, alias: string): Promise<{ removedFrom: string[]; migrated: boolean }> {
+    return removeDependencyGeneric(projectPath, ['cursor', 'skills'], alias);
 }
 
 // ============ Claude support ============
@@ -422,14 +432,6 @@ export async function addClaudeAgentDependency(projectPath: string, agentName: s
 
 export async function removeClaudeAgentDependency(projectPath: string, alias: string): Promise<{ removedFrom: string[]; migrated: boolean }> {
     return removeDependencyGeneric(projectPath, ['claude', 'agents'], alias);
-}
-
-export async function addClaudePluginDependency(projectPath: string, pluginName: string, repoUrl: string, alias?: string, isLocal: boolean = false): Promise<{ migrated: boolean }> {
-    return addDependencyGeneric(projectPath, ['claude', 'plugins'], pluginName, repoUrl, alias, isLocal);
-}
-
-export async function removeClaudePluginDependency(projectPath: string, alias: string): Promise<{ removedFrom: string[]; migrated: boolean }> {
-    return removeDependencyGeneric(projectPath, ['claude', 'plugins'], alias);
 }
 
 // Backwards-compatible exports for existing code paths (Cursor only). These will be removed once CLI is migrated.

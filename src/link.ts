@@ -68,19 +68,19 @@ export async function unlinkCopilotInstruction(projectPath: string, alias: strin
 }
 
 /**
- * Link a Cursor plan (new function)
+ * Link a Cursor command
  */
-export async function linkPlan(
+export async function linkCursorCommand(
     projectPath: string,
-    planName: string,
+    commandName: string,
     repo: RepoConfig,
     alias?: string,
     isLocal: boolean = false
 ): Promise<{ sourceName: string; targetName: string }> {
-    const adapter = getAdapter('cursor', 'plans');
+    const adapter = getAdapter('cursor', 'commands');
     const result = await linkEntry(adapter, {
         projectPath,
-        name: planName,
+        name: commandName,
         repo,
         alias,
         isLocal
@@ -89,10 +89,38 @@ export async function linkPlan(
 }
 
 /**
- * Unlink a Cursor plan (new function)
+ * Unlink a Cursor command
  */
-export async function unlinkPlan(projectPath: string, alias: string): Promise<void> {
-    const adapter = getAdapter('cursor', 'plans');
+export async function unlinkCursorCommand(projectPath: string, alias: string): Promise<void> {
+    const adapter = getAdapter('cursor', 'commands');
+    await unlinkEntry(adapter, projectPath, alias);
+}
+
+/**
+ * Link a Cursor skill
+ */
+export async function linkCursorSkill(
+    projectPath: string,
+    skillName: string,
+    repo: RepoConfig,
+    alias?: string,
+    isLocal: boolean = false
+): Promise<void> {
+    const adapter = getAdapter('cursor', 'skills');
+    await linkEntry(adapter, {
+        projectPath,
+        name: skillName,
+        repo,
+        alias,
+        isLocal
+    });
+}
+
+/**
+ * Unlink a Cursor skill
+ */
+export async function unlinkCursorSkill(projectPath: string, alias: string): Promise<void> {
+    const adapter = getAdapter('cursor', 'skills');
     await unlinkEntry(adapter, projectPath, alias);
 }
 
@@ -153,31 +181,3 @@ export async function unlinkClaudeAgent(projectPath: string, alias: string): Pro
     await unlinkEntry(adapter, projectPath, alias);
 }
 
-/**
- * Link a Claude plugin
- */
-export async function linkClaudePlugin(
-    projectPath: string,
-    pluginName: string,
-    repo: RepoConfig,
-    alias?: string,
-    isLocal: boolean = false
-): Promise<{ sourceName: string; targetName: string }> {
-    const adapter = getAdapter('claude', 'plugins');
-    const result = await linkEntry(adapter, {
-        projectPath,
-        name: pluginName,
-        repo,
-        alias,
-        isLocal
-    });
-    return { sourceName: result.sourceName, targetName: result.targetName };
-}
-
-/**
- * Unlink a Claude plugin
- */
-export async function unlinkClaudePlugin(projectPath: string, alias: string): Promise<void> {
-    const adapter = getAdapter('claude', 'plugins');
-    await unlinkEntry(adapter, projectPath, alias);
-}
