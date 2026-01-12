@@ -1,6 +1,6 @@
 {
   "name": "ai-rules-sync",
-  "version": "0.2.0",
+  "version": "0.3.0",
   "type": "module",
   "bin": {
     "ais": "./dist/index.js"
@@ -15,7 +15,7 @@
   "license": "Unlicense",
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/lbb00/cursor-rules-sync.git"
+    "url": "git+https://github.com/lbb00/ai-rules-sync.git"
   },
   "keywords": [
     "ai",

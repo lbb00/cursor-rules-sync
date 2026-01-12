@@ -11,12 +11,6 @@
 
 AIS allows you to centrally manage rules in Git repositories and synchronize them across projects using symbolic links. Say goodbye to copy-pasting `.mdc` files and drifting configurations.
 
-## What's New in v0.2.0
-
-- ✅ **Fixed multi-repo config loss**: Repository configurations are now correctly preserved when installing from multiple unconfigured repos
-- ✅ **Fixed bash completion**: Copilot commands now correctly suggest copilot instructions instead of cursor rules
-- ✅ **Improved zsh completion**: Added support for nested subcommands like `ais cursor rules add` and `ais cursor plans add`
-
 ### Why AIS?
 
 - **🧩 Multi-Repository & Decentralized**: Mix and match rules from various sources—company standards, team-specific protocols, or open-source collections—without conflict.

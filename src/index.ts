@@ -310,6 +310,9 @@ async function installCopilotInstructions(projectPath: string): Promise<void> {
       await setConfig({ repos: { ...repos, [name]: repoConfig } })
       repos[name] = repoConfig
       await cloneOrUpdateRepo(repoConfig)
+    }
+
+    await linkCopilotInstruction(projectPath, ruleName, repoConfig, alias)
   }
 
   console.log(chalk.green('All Copilot instructions installed successfully.'))
