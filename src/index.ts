@@ -156,6 +156,7 @@ async function installCursorRules(projectPath: string): Promise<void> {
       repoConfig = { name, url: repoUrl, path: repoDir }
 
       await setConfig({ repos: { ...repos, [name]: repoConfig } })
+      repos[name] = repoConfig
       await cloneOrUpdateRepo(repoConfig)
     } else {
       if (!(await fs.pathExists(repoConfig.path))) {
@@ -231,6 +232,7 @@ async function installCursorPlans(projectPath: string): Promise<void> {
       repoConfig = { name, url: repoUrl, path: repoDir }
 
       await setConfig({ repos: { ...repos, [name]: repoConfig } })
+      repos[name] = repoConfig
       await cloneOrUpdateRepo(repoConfig)
     } else {
       if (!(await fs.pathExists(repoConfig.path))) {
@@ -306,15 +308,8 @@ async function installCopilotInstructions(projectPath: string): Promise<void> {
       repoConfig = { name, url: repoUrl, path: repoDir }
 
       await setConfig({ repos: { ...repos, [name]: repoConfig } })
+      repos[name] = repoConfig
       await cloneOrUpdateRepo(repoConfig)
-    } else {
-      if (!(await fs.pathExists(repoConfig.path))) {
-        await cloneOrUpdateRepo(repoConfig)
-      }
-    }
-
-    const isLocal = Object.prototype.hasOwnProperty.call(localInstructions || {}, key)
-    await linkCopilotInstruction(projectPath, ruleName, repoConfig, alias, isLocal)
   }
 
   console.log(chalk.green('All Copilot instructions installed successfully.'))
@@ -1023,9 +1018,15 @@ _ais_complete() {
     return 0
   fi
 
-  # cursor add / copilot add
-  if [[ "\$pprev" == "cursor" && "\$prev" == "add" ]] || [[ "\$pprev" == "copilot" && "\$prev" == "add" ]]; then
+  # cursor add
+  if [[ "\$pprev" == "cursor" && "\$prev" == "add" ]]; then
     COMPREPLY=( $(compgen -W "$(ais _complete cursor 2>/dev/null)" -- "\$cur") )
+    return 0
+  fi
+
+  # copilot add
+  if [[ "\$pprev" == "copilot" && "\$prev" == "add" ]]; then
+    COMPREPLY=( $(compgen -W "$(ais _complete copilot 2>/dev/null)" -- "\$cur") )
     return 0
   fi
 
@@ -1147,7 +1148,52 @@ _ais() {
       esac
       ;;
     name)
-      # Handle completion for specific names (like aliases)
+      case \"\$words[2]\" in
+        cursor)
+          case \"\$words[3]\" in
+            add)
+              local -a rules
+              rules=(\${(f)\"$(ais _complete cursor 2>/dev/null)\"})
+              if (( \$#rules )); then
+                compadd \"\$rules[@]\"
+              fi
+              ;;
+            rules)
+              case \"\$words[4]\" in
+                add)
+                  local -a rules
+                  rules=(\${(f)\"$(ais _complete cursor 2>/dev/null)\"})
+                  if (( \$#rules )); then
+                    compadd \"\$rules[@]\"
+                  fi
+                  ;;
+              esac
+              ;;
+            plans)
+              case \"\$words[4]\" in
+                add)
+                  local -a plans
+                  plans=(\${(f)\"$(ais _complete plans 2>/dev/null)\"})
+                  if (( \$#plans )); then
+                    compadd \"\$plans[@]\"
+                  fi
+                  ;;
+              esac
+              ;;
+          esac
+          ;;
+        copilot)
+          case \"\$words[3]\" in
+            add)
+              local -a instructions
+              instructions=(\${(f)\"$(ais _complete copilot 2>/dev/null)\"})
+              if (( \$#instructions )); then
+                compadd \"\$instructions[@]\"
+              fi
+              ;;
+          esac
+          ;;
+      esac
       ;;
     args)
       # Handle additional arguments
