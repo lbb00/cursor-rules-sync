@@ -11,6 +11,19 @@
 
 CRS allows you to centrally manage Cursor rules in Git repositories and synchronize them across any number of projects using symbolic links. Say goodbye to copy-pasting `.mdc` files and drifting configurations.
 
+## linkany (standalone package)
+
+CRS uses **`linkany`** — a safety-first symlink + manifest manager — as an **independent npm package**.
+
+- **Package**: `linkany` (see the upstream repository in `package.json`)
+- **Import**:
+
+```js
+import { add, remove, install, uninstall } from 'linkany';
+```
+
+CRS uses `linkany` with an **in-memory manifest JSON** and routes audit logs to the OS null device, so it **does not create any manifest/audit files in your project**.
+
 ### Why CRS?
 
 - **🧩 Multi-Repository & Decentralized**: Mix and match rules from various sources—company standards, team-specific protocols, or open-source collections—without conflict.

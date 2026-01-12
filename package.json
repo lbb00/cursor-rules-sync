@@ -26,7 +26,8 @@
     "chalk": "^5.6.2",
     "commander": "^14.0.2",
     "execa": "^9.6.1",
-    "fs-extra": "^11.3.3"
+    "fs-extra": "^11.3.3",
+    "linkany": "^0.0.3"
   },
   "devDependencies": {
     "@types/fs-extra": "^11.0.4",
