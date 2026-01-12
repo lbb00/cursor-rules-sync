@@ -1,15 +1,17 @@
 import fs from 'fs-extra';
 import path from 'path';
 import { SyncAdapter, ResolvedSource } from './types.js';
+import { createBaseAdapter } from './base.js';
 
 /**
  * Adapter for Cursor Rules (.cursor/rules/)
  * Mode: directory - links entire rule directories
  */
-export const cursorRulesAdapter: SyncAdapter = {
+export const cursorRulesAdapter: SyncAdapter = createBaseAdapter({
     name: 'cursor-rules',
     tool: 'cursor',
     subtype: 'rules',
+    configPath: ['cursor', 'rules'],
     defaultSourceDir: '.cursor/rules',
     targetDir: '.cursor/rules',
     mode: 'directory',
@@ -31,4 +33,4 @@ export const cursorRulesAdapter: SyncAdapter = {
     resolveTargetName(name: string, alias?: string): string {
         return alias || name;
     }
-};
+});

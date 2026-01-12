@@ -309,16 +309,69 @@ autoload -Uz compinit && compinit
 
 ## Architecture
 
-AIS uses a plugin-based adapter architecture:
+AIS uses a plugin-based adapter architecture with unified operations:
 
 ```
 CLI Layer
     ↓
+Adapter Registry & Lookup (findAdapterForAlias)
+    ↓
+Unified Operations (addDependency, removeDependency, link, unlink)
+    ↓
 Sync Engine (linkEntry, unlinkEntry)
     ↓
-Adapters (cursor-rules, cursor-plans, copilot-instructions)
-    ↓
-Config Layer (ai-rules-sync.json)
+Config Layer (ai-rules-sync.json via addDependencyGeneric, removeDependencyGeneric)
 ```
 
-This modular design makes it easy to add support for new AI tools (MCP, Windsurf, etc.) in the future.
+**Key Design Principles:**
+
+1. **Unified Interface**: All adapters (cursor-rules, cursor-plans, copilot-instructions) implement the same operations
+2. **Auto-Routing**: The `findAdapterForAlias()` function automatically finds the correct adapter based on where an alias is configured
+3. **Generic Functions**: `addDependencyGeneric()` and `removeDependencyGeneric()` work with any adapter via `configPath` property
+4. **Extensible**: Adding new AI tools only requires creating a new adapter and registering it in the adapter registry
+
+This modular design makes it easy to add support for new AI tools (MCP, Windsurf, etc.) in the future without duplicating add/remove logic.
+
+## Adding a New AI Tool Adapter
+
+To add support for a new AI tool, follow these steps:
+
+1. **Create a new adapter file** (`src/adapters/my-tool.ts`):
+
+```typescript
+import { createBaseAdapter } from './base.js';
+
+export const myToolAdapter = createBaseAdapter({
+  name: 'my-tool',
+  tool: 'my-tool',
+  subtype: 'configs',
+  configPath: ['myTool', 'configs'],
+  defaultSourceDir: '.my-tool/configs',
+  targetDir: '.my-tool/configs',
+  mode: 'directory',
+  // Optionally override resolveSource and resolveTargetName
+});
+```
+
+1. **Register the adapter** in `src/adapters/index.ts`:
+
+```typescript
+import { myToolAdapter } from './my-tool.js';
+
+// In DefaultAdapterRegistry constructor:
+this.register(myToolAdapter);
+```
+
+1. **Update ProjectConfig** in `src/project-config.ts` to include your tool's config section:
+
+```typescript
+export interface ProjectConfig {
+  // ... existing fields ...
+  myTool?: {
+    configs?: Record<string, RuleEntry>;
+  };
+}
+```
+
+That's it! Your new adapter will automatically support `add`, `remove`, `link`, and `unlink` operations through the unified interface.
+

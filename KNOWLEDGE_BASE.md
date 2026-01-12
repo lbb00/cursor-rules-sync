@@ -18,34 +18,52 @@
 
 ### Adapter System
 
-The sync engine uses a plugin-based architecture:
+The sync engine uses a plugin-based architecture with unified operations:
 
 ```
 src/adapters/
   types.ts              # SyncAdapter interface
-  index.ts              # Registry and exports
+  base.ts               # createBaseAdapter factory function
+  index.ts              # Registry and helper functions (getAdapter, findAdapterForAlias)
   cursor-rules.ts       # Cursor rules adapter (.cursor/rules/)
   cursor-plans.ts       # Cursor plans adapter (.cursor/plans/)
   copilot-instructions.ts # Copilot instructions adapter (.github/instructions/)
 
 src/sync-engine.ts      # Generic linkEntry/unlinkEntry functions
 src/link.ts             # Backward-compatible wrappers
+src/project-config.ts   # addDependencyGeneric, removeDependencyGeneric functions
 ```
 
-**SyncAdapter Interface:**
+**SyncAdapter Interface (Extended):**
 ```typescript
 interface SyncAdapter {
+  // Core properties
   name: string;           // e.g. "cursor-rules"
   tool: string;           // e.g. "cursor"
   subtype: string;        // e.g. "rules", "plans"
+  configPath: [string, string]; // e.g. ['cursor', 'rules']
   defaultSourceDir: string; // e.g. ".cursor/rules", ".cursor/plans", ".github/instructions"
   targetDir: string;      // e.g. ".cursor/rules"
   mode: 'directory' | 'file';
   fileSuffixes?: string[];
+
+  // Optional resolution hooks
   resolveSource?(...): Promise<ResolvedSource>;
   resolveTargetName?(...): string;
+
+  // Unified operations (provided by createBaseAdapter)
+  addDependency(projectPath, name, repoUrl, alias?, isLocal?): Promise<{migrated}>;
+  removeDependency(projectPath, alias): Promise<{removedFrom, migrated}>;
+  link(options): Promise<LinkResult>;
+  unlink(projectPath, alias): Promise<void>;
 }
 ```
+
+**Key Benefits:**
+- **Unified Interface**: All adapters provide the same add/remove/link/unlink operations
+- **No Hardcoding**: configPath allows generic functions to work with any adapter
+- **Automatic Routing**: findAdapterForAlias() finds the right adapter based on where alias is configured
+- **Reduced Duplication**: Eliminated addCursorDependency, addPlanDependency, addCopilotDependency duplication
 
 **SourceDirConfig Interface (source directory configuration for rules repos):**
 ```typescript
@@ -79,6 +97,32 @@ interface ProjectConfig {
 ```
 
 The `sourceDir` field separates source directory configuration from dependency records, avoiding field name conflicts where `cursor.rules` could mean either a source path (string) or dependencies (object).
+
+**Helper Functions:**
+
+- `getAdapter(tool, subtype)`: Get adapter by tool/subtype, throws if not found
+- `getDefaultAdapter(tool)`: Get the first adapter for a tool
+- `getToolAdapters(tool)`: Get all adapters for a tool
+- `findAdapterForAlias(config, alias)`: Find which adapter manages a specific alias by checking all config sections
+- `addDependencyGeneric(projectPath, configPath, name, repoUrl, alias?, isLocal?)`: Generic function to add dependency to any config section
+- `removeDependencyGeneric(projectPath, configPath, alias)`: Generic function to remove dependency from any config section
+
+## Unified Operation Pattern
+
+With the refactored architecture, operations are now unified across all adapters:
+
+```typescript
+const adapter = findAdapterForAlias(config, alias);
+if (!adapter) throw new Error(`Alias "${alias}" not found`);
+
+// All adapters support the same operations
+await adapter.link(options);           // Link from repo to project
+await adapter.unlink(projectPath, alias); // Unlink from project
+await adapter.addDependency(...);      // Add to config
+await adapter.removeDependency(...);   // Remove from config
+```
+
+This eliminates the need for separate functions like `addCursorDependency`, `addPlanDependency`, `addCopilotDependency`, etc.
 
 ## Feature Summary
 

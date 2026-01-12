@@ -2,10 +2,12 @@ import { SyncAdapter, AdapterRegistry } from './types.js';
 import { cursorRulesAdapter } from './cursor-rules.js';
 import { cursorPlansAdapter } from './cursor-plans.js';
 import { copilotInstructionsAdapter } from './copilot-instructions.js';
+import { ProjectConfig } from '../project-config.js';
 
-// Re-export types
+// Re-export types and utilities
 export * from './types.js';
 export { stripCopilotSuffix, hasCopilotSuffix } from './copilot-instructions.js';
+export { createBaseAdapter } from './base.js';
 
 /**
  * Default adapter registry with all built-in adapters
@@ -83,4 +85,22 @@ export function getDefaultAdapter(tool: string): SyncAdapter {
  */
 export function getToolAdapters(tool: string): SyncAdapter[] {
     return adapterRegistry.getForTool(tool);
+}
+/**
+ * Find adapter by checking which config section contains the alias
+ */
+export function findAdapterForAlias(
+    cfg: ProjectConfig,
+    alias: string
+): { adapter: SyncAdapter; section: string } | null {
+    if (cfg.cursor?.rules?.[alias]) {
+        return { adapter: cursorRulesAdapter, section: 'cursor.rules' };
+    }
+    if (cfg.cursor?.plans?.[alias]) {
+        return { adapter: cursorPlansAdapter, section: 'cursor.plans' };
+    }
+    if (cfg.copilot?.instructions?.[alias]) {
+        return { adapter: copilotInstructionsAdapter, section: 'copilot.instructions' };
+    }
+    return null;
 }

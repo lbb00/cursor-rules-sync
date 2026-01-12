@@ -1,6 +1,7 @@
 import fs from 'fs-extra';
 import path from 'path';
 import { SyncAdapter, ResolvedSource } from './types.js';
+import { createBaseAdapter } from './base.js';
 
 const SUFFIX_INSTRUCTIONS_MD = '.instructions.md';
 const SUFFIX_MD = '.md';
@@ -9,10 +10,11 @@ const SUFFIX_MD = '.md';
  * Adapter for Copilot Instructions (.github/instructions/)
  * Mode: file - links individual instruction files (.instructions.md or .md)
  */
-export const copilotInstructionsAdapter: SyncAdapter = {
+export const copilotInstructionsAdapter: SyncAdapter = createBaseAdapter({
     name: 'copilot-instructions',
     tool: 'copilot',
     subtype: 'instructions',
+    configPath: ['copilot', 'instructions'],
     defaultSourceDir: '.github/instructions',
     targetDir: '.github/instructions',
     mode: 'file',
@@ -90,7 +92,7 @@ export const copilotInstructionsAdapter: SyncAdapter = {
 
         return base;
     }
-};
+});
 
 /**
  * Helper to strip copilot suffixes from a name (for display purposes)

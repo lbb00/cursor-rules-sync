@@ -1,15 +1,17 @@
 import fs from 'fs-extra';
 import path from 'path';
 import { SyncAdapter, ResolvedSource } from './types.js';
+import { createBaseAdapter } from './base.js';
 
 /**
  * Adapter for Cursor Plans (.cursor/plans/)
  * Mode: file - links individual plan files (.md)
  */
-export const cursorPlansAdapter: SyncAdapter = {
+export const cursorPlansAdapter: SyncAdapter = createBaseAdapter({
     name: 'cursor-plans',
     tool: 'cursor',
     subtype: 'plans',
+    configPath: ['cursor', 'plans'],
     defaultSourceDir: '.cursor/plans',
     targetDir: '.cursor/plans',
     mode: 'file',
@@ -62,4 +64,4 @@ export const cursorPlansAdapter: SyncAdapter = {
         }
         return base;
     }
-};
+});

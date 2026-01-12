@@ -14,6 +14,9 @@ export interface SyncAdapter {
     /** Subtype under the tool, e.g. "rules", "plans", "instructions" */
     subtype: string;
 
+    /** Config key path, e.g. ['cursor', 'rules'] or ['copilot', 'instructions'] */
+    configPath: [string, string];
+
     /** Default source directory in rules repo, e.g. ".cursor/rules", ".cursor/plans", ".github/instructions" */
     defaultSourceDir: string;
 
@@ -42,6 +45,27 @@ export interface SyncAdapter {
      * Default behavior: use alias if provided, otherwise use name.
      */
     resolveTargetName?(name: string, alias?: string, sourceSuffix?: string): string;
+
+    /** Add a dependency to project config */
+    addDependency(
+        projectPath: string,
+        name: string,
+        repoUrl: string,
+        alias?: string,
+        isLocal?: boolean
+    ): Promise<{ migrated: boolean }>;
+
+    /** Remove a dependency from project config */
+    removeDependency(
+        projectPath: string,
+        alias: string
+    ): Promise<{ removedFrom: string[]; migrated: boolean }>;
+
+    /** Link entry from repo to project (filesystem) */
+    link(options: SyncOptions): Promise<LinkResult>;
+
+    /** Unlink entry from project (filesystem) */
+    unlink(projectPath: string, alias: string): Promise<void>;
 }
 
 /**

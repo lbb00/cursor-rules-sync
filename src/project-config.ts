@@ -263,127 +263,103 @@ async function writeNewConfig(projectPath: string, isLocal: boolean, config: Pro
     await fs.writeJson(configPath, config, { spaces: 2 });
 }
 
-export async function addCursorDependency(projectPath: string, ruleName: string, repoUrl: string, alias?: string, isLocal: boolean = false): Promise<{ migrated: boolean }> {
+/**
+ * Generic function to add a dependency to project config
+ * This function works with any adapter by using the configPath
+ * @param projectPath - Path to the project
+ * @param configPath - Config path like ['cursor', 'rules'] or ['copilot', 'instructions']
+ * @param name - Original name of the dependency
+ * @param repoUrl - Repository URL
+ * @param alias - Optional alias for the dependency
+ * @param isLocal - Whether to store in local config
+ */
+export async function addDependencyGeneric(
+    projectPath: string,
+    configPath: [string, string],
+    name: string,
+    repoUrl: string,
+    alias?: string,
+    isLocal: boolean = false
+): Promise<{ migrated: boolean }> {
     const migration = await migrateLegacyToNew(projectPath);
     const config = await readNewConfigForWrite(projectPath, isLocal);
 
-    config.cursor ??= {};
-    config.cursor.rules ??= {};
+    const [topLevel, subLevel] = configPath;
 
-    const targetName = alias || ruleName;
-    config.cursor.rules[targetName] =
-        alias && alias !== ruleName
-            ? { url: repoUrl, rule: ruleName }
+    // Initialize nested structure if needed
+    (config as any)[topLevel] ??= {};
+    (config as any)[topLevel][subLevel] ??= {};
+
+    const targetName = alias || name;
+    (config as any)[topLevel][subLevel][targetName] =
+        alias && alias !== name
+            ? { url: repoUrl, rule: name }
             : repoUrl;
 
     await writeNewConfig(projectPath, isLocal, config);
     return migration;
+}
+
+/**
+ * Generic function to remove a dependency from project config
+ * This function works with any adapter by using the configPath
+ * @param projectPath - Path to the project
+ * @param configPath - Config path like ['cursor', 'rules'] or ['copilot', 'instructions']
+ * @param alias - Alias of the dependency to remove
+ */
+export async function removeDependencyGeneric(
+    projectPath: string,
+    configPath: [string, string],
+    alias: string
+): Promise<{ removedFrom: string[]; migrated: boolean }> {
+    const migration = await migrateLegacyToNew(projectPath);
+    const removedFrom: string[] = [];
+
+    const [topLevel, subLevel] = configPath;
+
+    const mainPath = path.join(projectPath, CONFIG_FILENAME);
+    const mainConfig = await readConfigFile<ProjectConfig>(mainPath);
+    if ((mainConfig as any)[topLevel]?.[subLevel]?.[alias]) {
+        delete (mainConfig as any)[topLevel][subLevel][alias];
+        await fs.writeJson(mainPath, mainConfig, { spaces: 2 });
+        removedFrom.push(CONFIG_FILENAME);
+    }
+
+    const localPath = path.join(projectPath, LOCAL_CONFIG_FILENAME);
+    const localConfig = await readConfigFile<ProjectConfig>(localPath);
+    if ((localConfig as any)[topLevel]?.[subLevel]?.[alias]) {
+        delete (localConfig as any)[topLevel][subLevel][alias];
+        await fs.writeJson(localPath, localConfig, { spaces: 2 });
+        removedFrom.push(LOCAL_CONFIG_FILENAME);
+    }
+
+    return { removedFrom, migrated: migration.migrated };
+}
+
+export async function addCursorDependency(projectPath: string, ruleName: string, repoUrl: string, alias?: string, isLocal: boolean = false): Promise<{ migrated: boolean }> {
+    return addDependencyGeneric(projectPath, ['cursor', 'rules'], ruleName, repoUrl, alias, isLocal);
 }
 
 export async function removeCursorDependency(projectPath: string, alias: string): Promise<{ removedFrom: string[]; migrated: boolean }> {
-    const migration = await migrateLegacyToNew(projectPath);
-    const removedFrom: string[] = [];
-
-    const mainPath = path.join(projectPath, CONFIG_FILENAME);
-    const mainConfig = await readConfigFile<ProjectConfig>(mainPath);
-    if (mainConfig.cursor?.rules && mainConfig.cursor.rules[alias]) {
-        delete mainConfig.cursor.rules[alias];
-        await fs.writeJson(mainPath, mainConfig, { spaces: 2 });
-        removedFrom.push(CONFIG_FILENAME);
-    }
-
-    const localPath = path.join(projectPath, LOCAL_CONFIG_FILENAME);
-    const localConfig = await readConfigFile<ProjectConfig>(localPath);
-    if (localConfig.cursor?.rules && localConfig.cursor.rules[alias]) {
-        delete localConfig.cursor.rules[alias];
-        await fs.writeJson(localPath, localConfig, { spaces: 2 });
-        removedFrom.push(LOCAL_CONFIG_FILENAME);
-    }
-
-    return { removedFrom, migrated: migration.migrated };
+    return removeDependencyGeneric(projectPath, ['cursor', 'rules'], alias);
 }
 
 export async function addCopilotDependency(projectPath: string, ruleName: string, repoUrl: string, alias?: string, isLocal: boolean = false): Promise<{ migrated: boolean }> {
-    // If legacy exists, migrate first to avoid new-config shadowing legacy main rules.
-    const migration = await migrateLegacyToNew(projectPath);
-    const config = await readNewConfigForWrite(projectPath, isLocal);
-
-    config.copilot ??= {};
-    config.copilot.instructions ??= {};
-
-    const targetName = alias || ruleName;
-    config.copilot.instructions[targetName] =
-        alias && alias !== ruleName
-            ? { url: repoUrl, rule: ruleName }
-            : repoUrl;
-
-    await writeNewConfig(projectPath, isLocal, config);
-    return migration;
+    return addDependencyGeneric(projectPath, ['copilot', 'instructions'], ruleName, repoUrl, alias, isLocal);
 }
 
 export async function removeCopilotDependency(projectPath: string, alias: string): Promise<{ removedFrom: string[]; migrated: boolean }> {
-    const migration = await migrateLegacyToNew(projectPath);
-    const removedFrom: string[] = [];
-
-    const mainPath = path.join(projectPath, CONFIG_FILENAME);
-    const mainConfig = await readConfigFile<ProjectConfig>(mainPath);
-    if (mainConfig.copilot?.instructions && mainConfig.copilot.instructions[alias]) {
-        delete mainConfig.copilot.instructions[alias];
-        await fs.writeJson(mainPath, mainConfig, { spaces: 2 });
-        removedFrom.push(CONFIG_FILENAME);
-    }
-
-    const localPath = path.join(projectPath, LOCAL_CONFIG_FILENAME);
-    const localConfig = await readConfigFile<ProjectConfig>(localPath);
-    if (localConfig.copilot?.instructions && localConfig.copilot.instructions[alias]) {
-        delete localConfig.copilot.instructions[alias];
-        await fs.writeJson(localPath, localConfig, { spaces: 2 });
-        removedFrom.push(LOCAL_CONFIG_FILENAME);
-    }
-
-    return { removedFrom, migrated: migration.migrated };
+    return removeDependencyGeneric(projectPath, ['copilot', 'instructions'], alias);
 }
 
 // ============ Plans support ============
 
 export async function addPlanDependency(projectPath: string, planName: string, repoUrl: string, alias?: string, isLocal: boolean = false): Promise<{ migrated: boolean }> {
-    const migration = await migrateLegacyToNew(projectPath);
-    const config = await readNewConfigForWrite(projectPath, isLocal);
-
-    config.cursor ??= {};
-    config.cursor.plans ??= {};
-
-    const targetName = alias || planName;
-    config.cursor.plans[targetName] =
-        alias && alias !== planName
-            ? { url: repoUrl, rule: planName }
-            : repoUrl;
-
-    await writeNewConfig(projectPath, isLocal, config);
-    return migration;
+    return addDependencyGeneric(projectPath, ['cursor', 'plans'], planName, repoUrl, alias, isLocal);
 }
 
 export async function removePlanDependency(projectPath: string, alias: string): Promise<{ removedFrom: string[]; migrated: boolean }> {
-    const migration = await migrateLegacyToNew(projectPath);
-    const removedFrom: string[] = [];
-
-    const mainPath = path.join(projectPath, CONFIG_FILENAME);
-    const mainConfig = await readConfigFile<ProjectConfig>(mainPath);
-    if (mainConfig.cursor?.plans && mainConfig.cursor.plans[alias]) {
-        delete mainConfig.cursor.plans[alias];
-        await fs.writeJson(mainPath, mainConfig, { spaces: 2 });
-        removedFrom.push(CONFIG_FILENAME);
-    }
-
-    const localPath = path.join(projectPath, LOCAL_CONFIG_FILENAME);
-    const localConfig = await readConfigFile<ProjectConfig>(localPath);
-    if (localConfig.cursor?.plans && localConfig.cursor.plans[alias]) {
-        delete localConfig.cursor.plans[alias];
-        await fs.writeJson(localPath, localConfig, { spaces: 2 });
-        removedFrom.push(LOCAL_CONFIG_FILENAME);
-    }
-
-    return { removedFrom, migrated: migration.migrated };
+    return removeDependencyGeneric(projectPath, ['cursor', 'plans'], alias);
 }
 
 // Backwards-compatible exports for existing code paths (Cursor only). These will be removed once CLI is migrated.

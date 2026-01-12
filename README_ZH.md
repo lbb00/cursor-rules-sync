@@ -305,16 +305,68 @@ autoload -Uz compinit && compinit
 
 ## 架构
 
-AIS 使用基于插件的适配器架构：
+AIS 使用基于插件的适配器架构，具有统一的操作接口：
 
 ```
 CLI 层
     ↓
+适配器注册与查找 (findAdapterForAlias)
+    ↓
+统一操作 (addDependency, removeDependency, link, unlink)
+    ↓
 同步引擎 (linkEntry, unlinkEntry)
     ↓
-适配器 (cursor-rules, cursor-plans, copilot-instructions)
-    ↓
-配置层 (ai-rules-sync.json)
+配置层 (ai-rules-sync.json via addDependencyGeneric, removeDependencyGeneric)
 ```
 
-这种模块化设计使得未来添加更多 AI 工具支持（如 MCP、Windsurf 等）变得简单。
+**核心设计原则：**
+
+1. **统一接口**：所有适配器（cursor-rules、cursor-plans、copilot-instructions）实现相同的操作
+2. **自动路由**：`findAdapterForAlias()` 函数根据别名的配置位置自动查找正确的适配器
+3. **通用函数**：`addDependencyGeneric()` 和 `removeDependencyGeneric()` 通过 `configPath` 属性与任何适配器配合工作
+4. **可扩展性**：添加新的 AI 工具只需创建新的适配器并在适配器注册表中注册它
+
+这种模块化设计使得未来添加更多 AI 工具支持（如 MCP、Windsurf 等）变得简单，而无需复制 add/remove 逻辑。
+
+## 添加新的 AI 工具适配器
+
+要添加对新 AI 工具的支持，请按照以下步骤进行：
+
+1. **创建新的适配器文件** (`src/adapters/my-tool.ts`)：
+
+```typescript
+import { createBaseAdapter } from './base.js';
+
+export const myToolAdapter = createBaseAdapter({
+  name: 'my-tool',
+  tool: 'my-tool',
+  subtype: 'configs',
+  configPath: ['myTool', 'configs'],
+  defaultSourceDir: '.my-tool/configs',
+  targetDir: '.my-tool/configs',
+  mode: 'directory',
+  // 可选：覆盖 resolveSource 和 resolveTargetName
+});
+```
+
+1. **在 `src/adapters/index.ts` 中注册适配器**：
+
+```typescript
+import { myToolAdapter } from './my-tool.js';
+
+// 在 DefaultAdapterRegistry 构造函数中：
+this.register(myToolAdapter);
+```
+
+1. **在 `src/project-config.ts` 中更新 ProjectConfig**，包含你的工具配置部分：
+
+```typescript
+export interface ProjectConfig {
+  // ... 现有字段 ...
+  myTool?: {
+    configs?: Record<string, RuleEntry>;
+  };
+}
+```
+
+这就是全部！你的新适配器将自动通过统一接口支持 `add`、`remove`、`link` 和 `unlink` 操作。
