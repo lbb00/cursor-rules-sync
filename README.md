@@ -26,10 +26,10 @@ AIS allows you to centrally manage rules in Git repositories and synchronize the
 |------|------|--------------------------|------------------|
 | Cursor | Rules | `.cursor/rules/` | `.cursor/rules/` |
 | Cursor | Plans | `.cursor/plans/` | `.cursor/plans/` |
+| Cursor | Skills | `.cursor/skills/` | `.cursor/skills/` |
 | Copilot | Instructions | `.github/instructions/` | `.github/instructions/` |
 | Claude | Skills | `.claude/skills/` | `.claude/skills/` |
 | Claude | Agents | `.claude/agents/` | `.claude/agents/` |
-| Claude | Plugins | `plugins/` | `plugins/` |
 
 ## Install
 
@@ -52,15 +52,15 @@ You can customize these paths by adding an `ai-rules-sync.json` file to your rul
   "sourceDir": {
     "cursor": {
       "rules": ".cursor/rules",
-      "plans": ".cursor/plans"
+      "plans": ".cursor/plans",
+      "skills": ".cursor/skills"
     },
     "copilot": {
       "instructions": ".github/instructions"
     },
     "claude": {
       "skills": ".claude/skills",
-      "agents": ".claude/agents",
-      "plugins": "plugins"
+      "agents": ".claude/agents"
     }
   }
 }
@@ -69,10 +69,10 @@ You can customize these paths by adding an `ai-rules-sync.json` file to your rul
 - `rootPath`: Optional global prefix applied to all source directories (default: empty, meaning repository root)
 - `sourceDir.cursor.rules`: Source directory for Cursor rules (default: `.cursor/rules`)
 - `sourceDir.cursor.plans`: Source directory for Cursor plans (default: `.cursor/plans`)
+- `sourceDir.cursor.skills`: Source directory for Cursor skills (default: `.cursor/skills`)
 - `sourceDir.copilot.instructions`: Source directory for Copilot instructions (default: `.github/instructions`)
 - `sourceDir.claude.skills`: Source directory for Claude skills (default: `.claude/skills`)
 - `sourceDir.claude.agents`: Source directory for Claude agents (default: `.claude/agents`)
-- `sourceDir.claude.plugins`: Source directory for Claude plugins (default: `plugins`)
 
 > **Note**: The old flat format (`cursor.rules` as string) is still supported for backward compatibility.
 
@@ -138,26 +138,48 @@ ais cursor add react react-v2 -t other-repo
 ais cursor add react -t https://github.com/user/rules-repo.git
 ```
 
-### Sync Cursor plans to project
+### Sync Cursor commands to project
 
 ```bash
-ais cursor plans add [plan name] [alias]
+ais cursor commands add [command name] [alias]
 ```
 
-This syncs plan files from the rules repository `.cursor/plans/` directory to `.cursor/plans/` in your project.
+This syncs command files from the rules repository `.cursor/commands/` directory to `.cursor/commands/` in your project.
 
 ```bash
-# Add 'feature-plan.md' plan
-ais cursor plans add feature-plan
+# Add 'deploy-docs' command
+ais cursor commands add deploy-docs
 
-# Add plan with alias
-ais cursor plans add feature-plan my-feature
+# Add command with alias
+ais cursor commands add deploy-docs deploy-docs-v2
 
-# Remove a plan
-ais cursor plans remove my-feature
+# Remove a command
+ais cursor commands remove deploy-docs-v2
 
-# Install all plans from config
-ais cursor plans install
+# Install all commands from config
+ais cursor commands install
+```
+
+### Sync Cursor skills to project
+
+```bash
+ais cursor skills add [skill name] [alias]
+```
+
+This syncs skill directories from the rules repository `.cursor/skills/` directory to `.cursor/skills/` in your project.
+
+```bash
+# Add 'code-review' skill
+ais cursor skills add code-review
+
+# Add skill with alias
+ais cursor skills add code-review my-review
+
+# Remove a skill
+ais cursor skills remove my-review
+
+# Install all skills from config
+ais cursor skills install
 ```
 
 ### Sync Copilot instructions to project
@@ -189,13 +211,6 @@ ais claude agents add [agentName] [alias]
 
 Default mapping: rules repo `.claude/agents/<agentName>` → project `.claude/agents/<alias|agentName>`.
 
-### Sync Claude plugins to project
-
-```bash
-ais claude plugins add [pluginName] [alias]
-```
-
-Default mapping: rules repo `plugins/<pluginName>` → project `plugins/<alias|pluginName>`.
 
 ### Remove entries
 
@@ -203,8 +218,8 @@ Default mapping: rules repo `plugins/<pluginName>` → project `plugins/<alias|p
 # Remove a Cursor rule
 ais cursor remove [alias]
 
-# Remove a Cursor plan
-ais cursor plans remove [alias]
+# Remove a Cursor command
+ais cursor commands remove [alias]
 
 # Remove a Copilot instruction
 ais copilot remove [alias]
@@ -215,25 +230,26 @@ ais claude skills remove [alias]
 # Remove a Claude agent
 ais claude agents remove [alias]
 
-# Remove a Claude plugin
-ais claude plugins remove [alias]
 ```
 
 This command removes the symbolic link, the ignore entry, and the dependency from `ai-rules-sync.json` (or `ai-rules-sync.local.json`).
 
 ### ai-rules-sync.json structure
 
-The `ai-rules-sync.json` file stores Cursor rules, plans, and Copilot instructions separately. It supports both simple string values (repo URL) and object values for aliased entries.
+The `ai-rules-sync.json` file stores Cursor rules, commands, and Copilot instructions separately. It supports both simple string values (repo URL) and object values for aliased entries.
 
 ```json
 {
   "cursor": {
-  "rules": {
-    "react": "https://github.com/user/repo.git",
+    "rules": {
+      "react": "https://github.com/user/repo.git",
       "react-v2": { "url": "https://github.com/user/another-repo.git", "rule": "react" }
     },
-    "plans": {
-      "feature-plan": "https://github.com/user/repo.git"
+    "commands": {
+      "deploy-docs": "https://github.com/user/repo.git"
+    },
+    "skills": {
+      "code-review": "https://github.com/user/repo.git"
     }
   },
   "copilot": {
@@ -247,9 +263,6 @@ The `ai-rules-sync.json` file stores Cursor rules, plans, and Copilot instructio
     },
     "agents": {
       "debugger": "https://github.com/user/repo.git"
-    },
-    "plugins": {
-      "my-plugin": "https://github.com/user/repo.git"
     }
   }
 }
@@ -264,13 +277,13 @@ You can use `ai-rules-sync.local.json` to add private rules/instructions that ar
 If you have an `ai-rules-sync.json` file in your project, you can install all entries with one command:
 
 ```bash
-# Install all Cursor rules and plans
+# Install all Cursor rules, commands, and skills
 ais cursor install
 
 # Install all Copilot instructions
 ais copilot install
 
-# Install all Claude skills, agents, and plugins
+# Install all Claude skills and agents
 ais claude install
 
 # Install everything (Cursor, Copilot, and Claude)
@@ -354,11 +367,11 @@ After enabling, you can use Tab to complete rule names:
 
 ```bash
 ais cursor add <Tab>         # Lists available rules
-ais cursor plans add <Tab>   # Lists available plans
+ais cursor commands add <Tab>   # Lists available commands
+ais cursor skills add <Tab>  # Lists available skills
 ais copilot add <Tab>        # Lists available instructions
 ais claude skills add <Tab>  # Lists available skills
 ais claude agents add <Tab>  # Lists available agents
-ais claude plugins add <Tab> # Lists available plugins
 ```
 
 **Note**: If you encounter `compdef: command not found` errors, ensure your shell has completion initialized. For zsh, add this to your `~/.zshrc` before the ais completion line:
@@ -386,7 +399,7 @@ Config Layer (ai-rules-sync.json via addDependencyGeneric, removeDependencyGener
 
 **Key Design Principles:**
 
-1. **Unified Interface**: All adapters (cursor-rules, cursor-plans, copilot-instructions) implement the same operations
+1. **Unified Interface**: All adapters (cursor-rules, cursor-commands, cursor-skills, copilot-instructions) implement the same operations
 2. **Auto-Routing**: The `findAdapterForAlias()` function automatically finds the correct adapter based on where an alias is configured
 3. **Generic Functions**: `addDependencyGeneric()` and `removeDependencyGeneric()` work with any adapter via `configPath` property
 4. **Extensible**: Adding new AI tools only requires creating a new adapter and registering it in the adapter registry

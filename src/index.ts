@@ -5,9 +5,9 @@ import path from 'path'
 import fs from 'fs-extra'
 import { getConfig, setConfig, getReposBaseDir, getCurrentRepo, RepoConfig } from './config.js'
 import { cloneOrUpdateRepo, runGitCommand } from './git.js'
-import { linkCopilotInstruction, linkRule, unlinkCopilotInstruction, unlinkRule, linkPlan, unlinkPlan, linkClaudeSkill, unlinkClaudeSkill, linkClaudeAgent, unlinkClaudeAgent, linkClaudePlugin, unlinkClaudePlugin } from './link.js'
+import { linkCopilotInstruction, linkRule, unlinkCopilotInstruction, unlinkRule, linkCursorCommand, unlinkCursorCommand, linkCursorSkill, unlinkCursorSkill, linkClaudeSkill, unlinkClaudeSkill, linkClaudeAgent, unlinkClaudeAgent } from './link.js'
 import { addIgnoreEntry } from './utils.js'
-import { addCopilotDependency, addCursorDependency, removeCopilotDependency, removeCursorDependency, getCombinedProjectConfig, getConfigSource, getRepoSourceConfig, getSourceDir, addPlanDependency, removePlanDependency, addClaudeSkillDependency, removeClaudeSkillDependency, addClaudeAgentDependency, removeClaudeAgentDependency, addClaudePluginDependency, removeClaudePluginDependency } from './project-config.js'
+import { addCopilotDependency, addCursorDependency, removeCopilotDependency, removeCursorDependency, getCombinedProjectConfig, getConfigSource, getRepoSourceConfig, getSourceDir, addCursorCommandDependency, removeCursorCommandDependency, addCursorSkillDependency, removeCursorSkillDependency, addClaudeSkillDependency, removeClaudeSkillDependency, addClaudeAgentDependency, removeClaudeAgentDependency } from './project-config.js'
 import { stripCopilotSuffix } from './adapters/index.js'
 import { checkAndPromptCompletion, forceInstallCompletion } from './completion.js'
 
@@ -79,9 +79,9 @@ type DefaultMode = 'cursor' | 'copilot' | 'claude' | 'ambiguous' | 'none';
 
 async function inferDefaultMode(projectPath: string): Promise<DefaultMode> {
   const cfg = await getCombinedProjectConfig(projectPath);
-  const cursorCount = Object.keys(cfg.cursor?.rules || {}).length + Object.keys(cfg.cursor?.plans || {}).length;
+  const cursorCount = Object.keys(cfg.cursor?.rules || {}).length + Object.keys(cfg.cursor?.commands || {}).length + Object.keys(cfg.cursor?.skills || {}).length;
   const copilotCount = Object.keys(cfg.copilot?.instructions || {}).length;
-  const claudeCount = Object.keys(cfg.claude?.skills || {}).length + Object.keys(cfg.claude?.agents || {}).length + Object.keys(cfg.claude?.plugins || {}).length;
+  const claudeCount = Object.keys(cfg.claude?.skills || {}).length + Object.keys(cfg.claude?.agents || {}).length;
 
   if (cursorCount > 0 && copilotCount === 0 && claudeCount === 0) return 'cursor';
   if (copilotCount > 0 && cursorCount === 0 && claudeCount === 0) return 'copilot';
@@ -173,12 +173,12 @@ async function installCursorRules(projectPath: string): Promise<void> {
   console.log(chalk.green('All Cursor rules installed successfully.'))
 }
 
-async function installCursorPlans(projectPath: string): Promise<void> {
+async function installCursorCommands(projectPath: string): Promise<void> {
   const config = await getCombinedProjectConfig(projectPath)
-  const plans = config.cursor?.plans
+  const commands = config.cursor?.commands
 
-  if (!plans || Object.keys(plans).length === 0) {
-    console.log(chalk.yellow('No Cursor plans found in ai-rules-sync*.json.'))
+  if (!commands || Object.keys(commands).length === 0) {
+    console.log(chalk.yellow('No Cursor commands found in ai-rules-sync*.json.'))
     return
   }
 
@@ -187,33 +187,33 @@ async function installCursorPlans(projectPath: string): Promise<void> {
 
   const source = await getConfigSource(projectPath)
   const localFileName = source === 'new' ? 'ai-rules-sync.local.json' : 'cursor-rules.local.json'
-  let localPlans: any = {}
+  let localCommands: any = {}
   const localPath = path.join(projectPath, localFileName)
   if (await fs.pathExists(localPath)) {
     try {
       const raw = await fs.readJson(localPath)
-      localPlans = source === 'new' ? (raw?.cursor?.plans || {}) : {}
+      localCommands = source === 'new' ? (raw?.cursor?.commands || {}) : {}
     } catch {
-      localPlans = {}
+      localCommands = {}
     }
   }
 
-  for (const [key, value] of Object.entries(plans)) {
+  for (const [key, value] of Object.entries(commands)) {
     let repoUrl: string;
-    let planName: string;
+    let commandName: string;
     let alias: string | undefined;
 
     if (typeof value === 'string') {
       repoUrl = value;
-      planName = key;
+      commandName = key;
       alias = undefined;
     } else {
       repoUrl = (value as any).url;
-      planName = (value as any).rule || key;
+      commandName = (value as any).rule || key;
       alias = key;
     }
 
-    console.log(chalk.blue(`Installing Cursor plan "${planName}" (as "${key}") from ${repoUrl}...`))
+    console.log(chalk.blue(`Installing Cursor command "${commandName}" (as "${key}") from ${repoUrl}...`))
 
     let repoConfig: RepoConfig | undefined
     for (const k in repos) {
@@ -224,7 +224,7 @@ async function installCursorPlans(projectPath: string): Promise<void> {
     }
 
     if (!repoConfig) {
-      console.log(chalk.yellow(`Repository for ${planName} not found locally. Configuring...`))
+      console.log(chalk.yellow(`Repository for ${commandName} not found locally. Configuring...`))
 
       let name = path.basename(repoUrl, '.git')
       if (!name) name = `repo-${Date.now()}`
@@ -242,11 +242,14 @@ async function installCursorPlans(projectPath: string): Promise<void> {
       }
     }
 
-    const isLocal = Object.prototype.hasOwnProperty.call(localPlans || {}, key)
-    await linkPlan(projectPath, planName, repoConfig, alias, isLocal)
+    const isLocal = Object.prototype.hasOwnProperty.call(localCommands || {}, key)
+    const { sourceName, targetName } = await linkCursorCommand(projectPath, commandName, repoConfig, alias, isLocal)
+
+    const depAlias = targetName === sourceName ? undefined : targetName;
+    await addCursorCommandDependency(projectPath, sourceName, repoConfig.url, depAlias, isLocal);
   }
 
-  console.log(chalk.green('All Cursor plans installed successfully.'))
+  console.log(chalk.green('All Cursor commands installed successfully.'))
 }
 
 async function installCopilotInstructions(projectPath: string): Promise<void> {
@@ -472,12 +475,12 @@ async function installClaudeAgents(projectPath: string): Promise<void> {
   console.log(chalk.green('All Claude agents installed successfully.'))
 }
 
-async function installClaudePlugins(projectPath: string): Promise<void> {
+async function installCursorSkills(projectPath: string): Promise<void> {
   const config = await getCombinedProjectConfig(projectPath)
-  const plugins = config.claude?.plugins
+  const skills = config.cursor?.skills
 
-  if (!plugins || Object.keys(plugins).length === 0) {
-    console.log(chalk.yellow('No Claude plugins found in ai-rules-sync*.json.'))
+  if (!skills || Object.keys(skills).length === 0) {
+    console.log(chalk.yellow('No Cursor skills found in ai-rules-sync*.json.'))
     return
   }
 
@@ -486,33 +489,33 @@ async function installClaudePlugins(projectPath: string): Promise<void> {
 
   const source = await getConfigSource(projectPath)
   const localFileName = source === 'new' ? 'ai-rules-sync.local.json' : 'cursor-rules.local.json'
-  let localPlugins: any = {}
+  let localSkills: any = {}
   const localPath = path.join(projectPath, localFileName)
   if (await fs.pathExists(localPath)) {
     try {
       const raw = await fs.readJson(localPath)
-      localPlugins = source === 'new' ? (raw?.claude?.plugins || {}) : {}
+      localSkills = source === 'new' ? (raw?.cursor?.skills || {}) : {}
     } catch {
-      localPlugins = {}
+      localSkills = {}
     }
   }
 
-  for (const [key, value] of Object.entries(plugins)) {
+  for (const [key, value] of Object.entries(skills)) {
     let repoUrl: string;
-    let pluginName: string;
+    let skillName: string;
     let alias: string | undefined;
 
     if (typeof value === 'string') {
       repoUrl = value;
-      pluginName = key;
+      skillName = key;
       alias = undefined;
     } else {
       repoUrl = (value as any).url;
-      pluginName = (value as any).rule || key;
+      skillName = (value as any).rule || key;
       alias = key;
     }
 
-    console.log(chalk.blue(`Installing Claude plugin "${pluginName}" (as "${key}") from ${repoUrl}...`))
+    console.log(chalk.blue(`Installing Cursor skill "${skillName}" (as "${key}") from ${repoUrl}...`))
 
     let repoConfig: RepoConfig | undefined
     for (const k in repos) {
@@ -523,7 +526,7 @@ async function installClaudePlugins(projectPath: string): Promise<void> {
     }
 
     if (!repoConfig) {
-      console.log(chalk.yellow(`Repository for ${pluginName} not found locally. Configuring...`))
+      console.log(chalk.yellow(`Repository for ${skillName} not found locally. Configuring...`))
 
       let name = path.basename(repoUrl, '.git')
       if (!name) name = `repo-${Date.now()}`
@@ -541,11 +544,11 @@ async function installClaudePlugins(projectPath: string): Promise<void> {
       }
     }
 
-    const isLocal = Object.prototype.hasOwnProperty.call(localPlugins || {}, key)
-    await linkClaudePlugin(projectPath, pluginName, repoConfig, alias, isLocal)
+    const isLocal = Object.prototype.hasOwnProperty.call(localSkills || {}, key)
+    await linkCursorSkill(projectPath, skillName, repoConfig, alias, isLocal)
   }
 
-  console.log(chalk.green('All Claude plugins installed successfully.'))
+  console.log(chalk.green('All Cursor skills installed successfully.'))
 }
 
 function resolveCopilotAliasFromConfig(input: string, keys: string[]): string {
@@ -556,16 +559,16 @@ function resolveCopilotAliasFromConfig(input: string, keys: string[]): string {
   return input;
 }
 
-function stripPlanSuffix(name: string): string {
+function stripCommandSuffix(name: string): string {
   if (name.endsWith('.md')) return name.slice(0, -'.md'.length);
   return name;
 }
 
-function resolvePlanAliasFromConfig(input: string, keys: string[]): string {
+function resolveCommandAliasFromConfig(input: string, keys: string[]): string {
   if (input.endsWith('.md')) return input;
-  const matches = keys.filter(k => stripPlanSuffix(k) === input);
+  const matches = keys.filter(k => stripCommandSuffix(k) === input);
   if (matches.length === 1) return matches[0];
-  if (matches.length > 1) throw new Error(`Alias "${input}" matches multiple plan entries: ${matches.join(', ')}. Please specify the suffix explicitly.`);
+  if (matches.length > 1) throw new Error(`Alias "${input}" matches multiple command entries: ${matches.join(', ')}. Please specify the suffix explicitly.`);
   return input;
 }
 
@@ -722,11 +725,11 @@ program
       const cfg = await getCombinedProjectConfig(projectPath);
 
       const inCursor = Object.prototype.hasOwnProperty.call(cfg.cursor?.rules || {}, alias) ||
-                       Object.prototype.hasOwnProperty.call(cfg.cursor?.plans || {}, alias);
+                       Object.prototype.hasOwnProperty.call(cfg.cursor?.commands || {}, alias) ||
+                       Object.prototype.hasOwnProperty.call(cfg.cursor?.skills || {}, alias);
       const inCopilot = Object.prototype.hasOwnProperty.call(cfg.copilot?.instructions || {}, alias);
       const inClaude = Object.prototype.hasOwnProperty.call(cfg.claude?.skills || {}, alias) ||
-                       Object.prototype.hasOwnProperty.call(cfg.claude?.agents || {}, alias) ||
-                       Object.prototype.hasOwnProperty.call(cfg.claude?.plugins || {}, alias);
+                       Object.prototype.hasOwnProperty.call(cfg.claude?.agents || {}, alias);
 
       const toolCount = [inCursor, inCopilot, inClaude].filter(Boolean).length;
       if (toolCount > 1) {
@@ -755,11 +758,10 @@ program
           console.log(chalk.yellow('Detected legacy "cursor-rules*.json". Migrated to "ai-rules-sync*.json". Consider deleting the legacy files to avoid ambiguity.'))
         }
       } else if (mode === 'claude') {
-        // Try all three subtypes to ensure consistency with explicit commands
+        // Try all two subtypes to ensure consistency with explicit commands
         const subtypes = [
           { key: 'skills', unlink: unlinkClaudeSkill, remove: removeClaudeSkillDependency, name: 'skill' },
-          { key: 'agents', unlink: unlinkClaudeAgent, remove: removeClaudeAgentDependency, name: 'agent' },
-          { key: 'plugins', unlink: unlinkClaudePlugin, remove: removeClaudePluginDependency, name: 'plugin' }
+          { key: 'agents', unlink: unlinkClaudeAgent, remove: removeClaudeAgentDependency, name: 'agent' }
         ] as const;
 
         let foundAny = false;
@@ -810,7 +812,8 @@ program
 
       if (mode === 'cursor' || mode === 'ambiguous') {
         await installCursorRules(projectPath)
-        await installCursorPlans(projectPath)
+        await installCursorCommands(projectPath)
+        await installCursorSkills(projectPath)
       }
       if (mode === 'copilot' || mode === 'ambiguous') {
         await installCopilotInstructions(projectPath)
@@ -818,7 +821,6 @@ program
       if (mode === 'claude' || mode === 'ambiguous') {
         await installClaudeSkills(projectPath)
         await installClaudeAgents(projectPath)
-        await installClaudePlugins(projectPath)
       }
     } catch (error: any) {
       console.error(chalk.red('Error installing entries:'), error.message)
@@ -829,7 +831,7 @@ program
 // ============ Cursor command group ============
 const cursor = program
   .command('cursor')
-  .description('Manage Cursor rules and plans in a project')
+  .description('Manage Cursor rules, commands, and skills in a project')
 
 // Default: cursor add = cursor rules add
 cursor
@@ -900,12 +902,13 @@ cursor
 
 cursor
   .command('install')
-  .description('Install all Cursor rules and plans from ai-rules-sync.json')
+  .description('Install all Cursor rules, commands, and skills from ai-rules-sync.json')
     .action(async () => {
       try {
       const projectPath = process.cwd()
       await installCursorRules(projectPath)
-      await installCursorPlans(projectPath)
+      await installCursorCommands(projectPath)
+      await installCursorSkills(projectPath)
     } catch (error: any) {
       console.error(chalk.red('Error installing Cursor rules:'), error.message)
       process.exit(1)
@@ -995,18 +998,18 @@ cursorRules
     }
   })
 
-// ============ Cursor plans subcommand ============
-const cursorPlans = cursor
-  .command('plans')
-  .description('Manage Cursor plans (.cursor/plans/)')
+// ============ Cursor commands subcommand ============
+const cursorCommands = cursor
+  .command('commands')
+  .description('Manage Cursor commands (.cursor/commands/)')
 
-cursorPlans
+cursorCommands
   .command('add')
-  .description('Sync Cursor plan to project (.cursor/plans/...)')
-  .argument('<planName>', 'Name of the plan file in the rules repo (under plans/)')
-  .argument('[alias]', 'Alias for the plan name')
-  .option('-l, --local', 'Add to ai-rules-sync.local.json (private plan)')
-  .action(async (planName, alias, options) => {
+  .description('Sync Cursor command to project (.cursor/commands/...)')
+  .argument('<commandName>', 'Name of the command file in the rules repo (under commands/)')
+  .argument('[alias]', 'Alias for the command name')
+  .option('-l, --local', 'Add to ai-rules-sync.local.json (private command)')
+  .action(async (commandName, alias, options) => {
     try {
       const opts = program.opts();
       const currentRepo = await getTargetRepo(opts);
@@ -1015,13 +1018,13 @@ cursorPlans
       console.log(chalk.gray(`Using repository: ${chalk.cyan(currentRepo.name)} (${currentRepo.url})`))
 
       const isLocal = options.local;
-      const { sourceName, targetName } = await linkPlan(projectPath, planName, currentRepo, alias, isLocal)
+      const { sourceName, targetName } = await linkCursorCommand(projectPath, commandName, currentRepo, alias, isLocal)
 
       const depAlias = targetName === sourceName ? undefined : targetName
-      const { migrated } = await addPlanDependency(projectPath, sourceName, currentRepo.url, depAlias, isLocal)
+      const { migrated } = await addCursorCommandDependency(projectPath, sourceName, currentRepo.url, depAlias, isLocal)
 
       const configFileName = isLocal ? 'ai-rules-sync.local.json' : 'ai-rules-sync.json';
-      console.log(chalk.green(`Updated ${configFileName} plans dependency.`))
+      console.log(chalk.green(`Updated ${configFileName} commands dependency.`))
 
       if (migrated) {
         console.log(chalk.yellow('Detected legacy "cursor-rules*.json". Migrated to "ai-rules-sync*.json". Consider deleting the legacy files to avoid ambiguity.'))
@@ -1035,48 +1038,131 @@ cursorPlans
         }
       }
     } catch (error: any) {
-      console.error(chalk.red('Error adding plan:'), error.message)
+      console.error(chalk.red('Error adding command:'), error.message)
       process.exit(1)
     }
   })
 
-cursorPlans
+cursorCommands
   .command('remove')
-  .description('Remove a Cursor plan from project')
-  .argument('<alias>', 'Alias (or name) of the plan to remove')
+  .description('Remove a Cursor command from project')
+  .argument('<alias>', 'Alias (or name) of the command to remove')
   .action(async (alias) => {
     try {
       const projectPath = process.cwd();
       const cfg = await getCombinedProjectConfig(projectPath);
-      const resolved = resolvePlanAliasFromConfig(alias, Object.keys(cfg.cursor?.plans || {}));
+      const resolved = resolveCommandAliasFromConfig(alias, Object.keys(cfg.cursor?.commands || {}));
 
-      await unlinkPlan(projectPath, resolved);
+      await unlinkCursorCommand(projectPath, resolved);
 
-      const { removedFrom, migrated } = await removePlanDependency(projectPath, resolved);
+      const { removedFrom, migrated } = await removeCursorCommandDependency(projectPath, resolved);
 
       if (removedFrom.length > 0) {
-        console.log(chalk.green(`Removed plan "${resolved}" from configuration: ${removedFrom.join(', ')}`));
+        console.log(chalk.green(`Removed command "${resolved}" from configuration: ${removedFrom.join(', ')}`));
       } else {
-        console.log(chalk.yellow(`Plan "${resolved}" was not found in any configuration file.`));
+        console.log(chalk.yellow(`Command "${resolved}" was not found in any configuration file.`));
       }
 
       if (migrated) {
         console.log(chalk.yellow('Detected legacy "cursor-rules*.json". Migrated to "ai-rules-sync*.json". Consider deleting the legacy files to avoid ambiguity.'))
       }
     } catch (error: any) {
-      console.error(chalk.red('Error removing plan:'), error.message)
+      console.error(chalk.red('Error removing command:'), error.message)
       process.exit(1)
     }
   })
 
-cursorPlans
+cursorCommands
   .command('install')
-  .description('Install all Cursor plans from ai-rules-sync.json')
+  .description('Install all Cursor commands from ai-rules-sync.json')
   .action(async () => {
     try {
-      await installCursorPlans(process.cwd())
+      await installCursorCommands(process.cwd())
     } catch (error: any) {
-      console.error(chalk.red('Error installing Cursor plans:'), error.message)
+      console.error(chalk.red('Error installing Cursor commands:'), error.message)
+      process.exit(1)
+    }
+  })
+
+// ============ Cursor skills subcommand ============
+const cursorSkills = cursor
+  .command('skills')
+  .description('Manage Cursor skills (.cursor/skills/)')
+
+cursorSkills
+  .command('add')
+  .description('Sync Cursor skill to project (.cursor/skills/...)')
+  .argument('<skillName>', 'Name of the skill directory in the rules repo')
+  .argument('[alias]', 'Alias for the skill name')
+  .option('-l, --local', 'Add to ai-rules-sync.local.json (private skill)')
+  .action(async (skillName, alias, options) => {
+    try {
+      const opts = program.opts();
+      const currentRepo = await getTargetRepo(opts);
+      const projectPath = process.cwd();
+
+      console.log(chalk.gray(`Using repository: ${chalk.cyan(currentRepo.name)} (${currentRepo.url})`))
+
+      const isLocal = options.local;
+      await linkCursorSkill(projectPath, skillName, currentRepo, alias, isLocal)
+
+      const { migrated } = await addCursorSkillDependency(projectPath, skillName, currentRepo.url, alias, isLocal)
+
+      const configFileName = isLocal ? 'ai-rules-sync.local.json' : 'ai-rules-sync.json';
+      console.log(chalk.green(`Updated ${configFileName} Cursor skill dependency.`))
+
+      if (migrated) {
+        console.log(chalk.yellow('Detected legacy "cursor-rules*.json". Migrated to "ai-rules-sync*.json". Consider deleting the legacy files to avoid ambiguity.'))
+      }
+
+      if (isLocal) {
+          const gitignorePath = path.join(projectPath, '.gitignore');
+        const added = await addIgnoreEntry(gitignorePath, 'ai-rules-sync.local.json', '# Local AI Rules Sync Config');
+          if (added) {
+          console.log(chalk.green(`Added "ai-rules-sync.local.json" to .gitignore.`));
+          }
+      }
+    } catch (error: any) {
+      console.error(chalk.red('Error adding Cursor skill:'), error.message)
+      process.exit(1)
+    }
+  })
+
+cursorSkills
+  .command('remove')
+  .description('Remove a Cursor skill from project')
+  .argument('<alias>', 'Alias (or name) of the skill to remove')
+  .action(async (alias) => {
+    try {
+      const projectPath = process.cwd();
+
+      await unlinkCursorSkill(projectPath, alias);
+
+      const { removedFrom, migrated } = await removeCursorSkillDependency(projectPath, alias);
+
+      if (removedFrom.length > 0) {
+        console.log(chalk.green(`Removed skill "${alias}" from configuration: ${removedFrom.join(', ')}`));
+      } else {
+        console.log(chalk.yellow(`Skill "${alias}" was not found in any configuration file.`));
+      }
+
+      if (migrated) {
+        console.log(chalk.yellow('Detected legacy "cursor-rules*.json". Migrated to "ai-rules-sync*.json". Consider deleting the legacy files to avoid ambiguity.'))
+      }
+    } catch (error: any) {
+      console.error(chalk.red('Error removing Cursor skill:'), error.message)
+      process.exit(1)
+    }
+  })
+
+cursorSkills
+  .command('install')
+  .description('Install all Cursor skills from ai-rules-sync.json')
+  .action(async () => {
+    try {
+      await installCursorSkills(process.cwd())
+    } catch (error: any) {
+      console.error(chalk.red('Error installing Cursor skills:'), error.message)
       process.exit(1)
     }
   })
@@ -1338,99 +1424,16 @@ claudeAgents
     }
   })
 
-// ============ Claude plugins subcommand ============
-const claudePlugins = claude
-  .command('plugins')
-  .description('Manage Claude plugins (plugins/)')
-
-claudePlugins
-  .command('add')
-  .description('Sync Claude plugin to project (plugins/...)')
-  .argument('<pluginName>', 'Name of the plugin directory in the rules repo')
-  .argument('[alias]', 'Alias for the plugin name')
-  .option('-l, --local', 'Add to ai-rules-sync.local.json (private plugin)')
-  .action(async (pluginName, alias, options) => {
-    try {
-      const opts = program.opts();
-      const currentRepo = await getTargetRepo(opts);
-      const projectPath = process.cwd();
-
-      console.log(chalk.gray(`Using repository: ${chalk.cyan(currentRepo.name)} (${currentRepo.url})`))
-
-      const isLocal = options.local;
-      await linkClaudePlugin(projectPath, pluginName, currentRepo, alias, isLocal)
-
-      const { migrated } = await addClaudePluginDependency(projectPath, pluginName, currentRepo.url, alias, isLocal)
-
-      const configFileName = isLocal ? 'ai-rules-sync.local.json' : 'ai-rules-sync.json';
-      console.log(chalk.green(`Updated ${configFileName} Claude plugin dependency.`))
-
-      if (migrated) {
-        console.log(chalk.yellow('Detected legacy "cursor-rules*.json". Migrated to "ai-rules-sync*.json". Consider deleting the legacy files to avoid ambiguity.'))
-      }
-
-      if (isLocal) {
-        const gitignorePath = path.join(projectPath, '.gitignore');
-        const added = await addIgnoreEntry(gitignorePath, 'ai-rules-sync.local.json', '# Local AI Rules Sync Config');
-        if (added) {
-          console.log(chalk.green(`Added "ai-rules-sync.local.json" to .gitignore.`));
-        }
-      }
-    } catch (error: any) {
-      console.error(chalk.red('Error adding Claude plugin:'), error.message)
-      process.exit(1)
-    }
-  })
-
-claudePlugins
-  .command('remove')
-  .description('Remove a Claude plugin from project')
-  .argument('<alias>', 'Alias (or name) of the plugin to remove')
-  .action(async (alias) => {
-    try {
-      const projectPath = process.cwd();
-
-      await unlinkClaudePlugin(projectPath, alias);
-
-      const { removedFrom, migrated } = await removeClaudePluginDependency(projectPath, alias);
-
-      if (removedFrom.length > 0) {
-        console.log(chalk.green(`Removed plugin "${alias}" from configuration: ${removedFrom.join(', ')}`));
-      } else {
-        console.log(chalk.yellow(`Plugin "${alias}" was not found in any configuration file.`));
-      }
-
-      if (migrated) {
-        console.log(chalk.yellow('Detected legacy "cursor-rules*.json". Migrated to "ai-rules-sync*.json". Consider deleting the legacy files to avoid ambiguity.'))
-      }
-    } catch (error: any) {
-      console.error(chalk.red('Error removing Claude plugin:'), error.message)
-      process.exit(1)
-    }
-  })
-
-claudePlugins
-  .command('install')
-  .description('Install all Claude plugins from ai-rules-sync.json')
-  .action(async () => {
-    try {
-      await installClaudePlugins(process.cwd())
-    } catch (error: any) {
-      console.error(chalk.red('Error installing Claude plugins:'), error.message)
-      process.exit(1)
-    }
-  })
 
 // ============ Claude install shortcut ============
 claude
   .command('install')
-  .description('Install all Claude skills, agents, and plugins from ai-rules-sync.json')
+  .description('Install all Claude skills and agents from ai-rules-sync.json')
   .action(async () => {
     try {
       const projectPath = process.cwd()
       await installClaudeSkills(projectPath)
       await installClaudeAgents(projectPath)
-      await installClaudePlugins(projectPath)
     } catch (error: any) {
       console.error(chalk.red('Error installing Claude components:'), error.message)
       process.exit(1)
@@ -1470,7 +1473,7 @@ program
 // Hidden command for shell tab completion
 program
   .command('_complete')
-  .argument('<type>', 'cursor, copilot, plans, claude-skills, claude-agents, or claude-plugins')
+  .argument('<type>', 'cursor, copilot, cursor-commands, cursor-skills, claude-skills, claude-agents')
   .description(false as any) // Hide from help
   .action(async (type: string) => {
     try {
@@ -1487,10 +1490,10 @@ program
       let subtype: string;
       let defaultDir: string;
 
-      if (type === 'plans') {
+      if (type === 'cursor-commands') {
         tool = 'cursor';
-        subtype = 'plans';
-        defaultDir = '.cursor/plans';
+        subtype = 'commands';
+        defaultDir = '.cursor/commands';
       } else if (type === 'copilot') {
         tool = 'copilot';
         subtype = 'instructions';
@@ -1503,10 +1506,10 @@ program
         tool = 'claude';
         subtype = 'agents';
         defaultDir = '.claude/agents';
-      } else if (type === 'claude-plugins') {
-        tool = 'claude';
-        subtype = 'plugins';
-        defaultDir = 'plugins';
+      } else if (type === 'cursor-skills') {
+        tool = 'cursor';
+        subtype = 'skills';
+        defaultDir = '.cursor/skills';
       } else {
         // cursor rules
         tool = 'cursor';
@@ -1575,9 +1578,9 @@ _ais_complete() {
   local pprev="\${COMP_WORDS[COMP_CWORD-2]}"
   local ppprev="\${COMP_WORDS[COMP_CWORD-3]}"
 
-  # cursor plans add
-  if [[ "\$ppprev" == "cursor" && "\$pprev" == "plans" && "\$prev" == "add" ]]; then
-    COMPREPLY=( $(compgen -W "$(ais _complete plans 2>/dev/null)" -- "\$cur") )
+  # cursor commands add
+  if [[ "\$ppprev" == "cursor" && "\$pprev" == "commands" && "\$prev" == "add" ]]; then
+    COMPREPLY=( $(compgen -W "$(ais _complete cursor-commands 2>/dev/null)" -- "\$cur") )
     return 0
   fi
 
@@ -1605,9 +1608,9 @@ _ais_complete() {
     return 0
   fi
 
-  # claude plugins add
-  if [[ "\$ppprev" == "claude" && "\$pprev" == "plugins" && "\$prev" == "add" ]]; then
-    COMPREPLY=( $(compgen -W "$(ais _complete claude-plugins 2>/dev/null)" -- "\$cur") )
+  # cursor skills add
+  if [[ "\$ppprev" == "cursor" && "\$pprev" == "skills" && "\$prev" == "add" ]]; then
+    COMPREPLY=( $(compgen -W "$(ais _complete cursor-skills 2>/dev/null)" -- "\$cur") )
     return 0
   fi
 
@@ -1617,8 +1620,14 @@ _ais_complete() {
     return 0
   fi
 
-  # cursor plans
-  if [[ "\$pprev" == "cursor" && "\$prev" == "plans" ]]; then
+  # cursor commands
+  if [[ "\$pprev" == "cursor" && "\$prev" == "commands" ]]; then
+    COMPREPLY=( $(compgen -W "add remove install" -- "\$cur") )
+    return 0
+  fi
+
+  # cursor skills
+  if [[ "\$pprev" == "cursor" && "\$prev" == "skills" ]]; then
     COMPREPLY=( $(compgen -W "add remove install" -- "\$cur") )
     return 0
   fi
@@ -1641,14 +1650,14 @@ _ais_complete() {
     return 0
   fi
 
-  # claude plugins
-  if [[ "\$pprev" == "claude" && "\$prev" == "plugins" ]]; then
+  # cursor skills
+  if [[ "\$pprev" == "cursor" && "\$prev" == "skills" ]]; then
     COMPREPLY=( $(compgen -W "add remove install" -- "\$cur") )
     return 0
   fi
 
   if [[ "\$prev" == "cursor" ]]; then
-    COMPREPLY=( $(compgen -W "add remove install rules plans" -- "\$cur") )
+    COMPREPLY=( $(compgen -W "add remove install rules commands skills" -- "\$cur") )
     return 0
   fi
 
@@ -1658,7 +1667,7 @@ _ais_complete() {
   fi
 
   if [[ "\$prev" == "claude" ]]; then
-    COMPREPLY=( $(compgen -W "skills agents plugins install" -- "\$cur") )
+    COMPREPLY=( $(compgen -W "skills agents install" -- "\$cur") )
     return 0
   fi
 
@@ -1674,8 +1683,8 @@ complete -F _ais_complete ais
 # ais zsh completion
 _ais() {
   local -a subcmds
-  subcmds=(
-    'cursor:Manage Cursor rules and plans'
+subcmds=(
+    'cursor:Manage Cursor rules, commands, and skills'
     'copilot:Manage Copilot instructions'
     'claude:Manage Claude skills, agents, and plugins'
     'use:Configure rules repository'
@@ -1687,15 +1696,15 @@ _ais() {
     'completion:Output shell completion script'
   )
 
-  local -a cursor_subcmds copilot_subcmds claude_subcmds cursor_rules_subcmds cursor_plans_subcmds claude_skills_subcmds claude_agents_subcmds claude_plugins_subcmds
-  cursor_subcmds=('add:Add a Cursor rule' 'remove:Remove a Cursor rule' 'install:Install all Cursor entries' 'rules:Manage rules explicitly' 'plans:Manage plans')
+  local -a cursor_subcmds copilot_subcmds claude_subcmds cursor_rules_subcmds cursor_commands_subcmds cursor_skills_subcmds claude_skills_subcmds claude_agents_subcmds
+  cursor_subcmds=('add:Add a Cursor rule' 'remove:Remove a Cursor rule' 'install:Install all Cursor entries' 'rules:Manage rules explicitly' 'commands:Manage commands' 'skills:Manage skills')
   copilot_subcmds=('add:Add a Copilot instruction' 'remove:Remove a Copilot instruction' 'install:Install all Copilot instructions')
-  claude_subcmds=('skills:Manage Claude skills' 'agents:Manage Claude agents' 'plugins:Manage Claude plugins' 'install:Install all Claude components')
+  claude_subcmds=('skills:Manage Claude skills' 'agents:Manage Claude agents' 'install:Install all Claude components')
   cursor_rules_subcmds=('add:Add a Cursor rule' 'remove:Remove a Cursor rule' 'install:Install all Cursor rules')
-  cursor_plans_subcmds=('add:Add a Cursor plan' 'remove:Remove a Cursor plan' 'install:Install all Cursor plans')
+  cursor_commands_subcmds=('add:Add a Cursor command' 'remove:Remove a Cursor command' 'install:Install all Cursor commands')
+  cursor_skills_subcmds=('add:Add a Cursor skill' 'remove:Remove a Cursor skill' 'install:Install all Cursor skills')
   claude_skills_subcmds=('add:Add a Claude skill' 'remove:Remove a Claude skill' 'install:Install all Claude skills')
   claude_agents_subcmds=('add:Add a Claude agent' 'remove:Remove a Claude agent' 'install:Install all Claude agents')
-  claude_plugins_subcmds=('add:Add a Claude plugin' 'remove:Remove a Claude plugin' 'install:Install all Claude plugins')
 
   _arguments -C \\
     '1:command:->command' \\
@@ -1735,8 +1744,11 @@ _ais() {
             rules)
               _describe 'subsubcommand' cursor_rules_subcmds
               ;;
-            plans)
-              _describe 'subsubcommand' cursor_plans_subcmds
+            commands)
+              _describe 'subsubcommand' cursor_commands_subcmds
+              ;;
+            skills)
+              _describe 'subsubcommand' cursor_skills_subcmds
               ;;
             *)
               _describe 'subsubcommand' cursor_subcmds
@@ -1764,9 +1776,6 @@ _ais() {
               ;;
             agents)
               _describe 'subsubcommand' claude_agents_subcmds
-              ;;
-            plugins)
-              _describe 'subsubcommand' claude_plugins_subcmds
               ;;
             *)
               _describe 'subsubcommand' claude_subcmds
@@ -1797,13 +1806,24 @@ _ais() {
                   ;;
               esac
               ;;
-            plans)
+            commands)
+              case "\$words[4]" in
+                add)
+                  local -a commands
+                  commands=(\${(f)"$(ais _complete cursor-commands 2>/dev/null)"})
+                  if (( \$#commands )); then
+                    compadd "\$commands[@]"
+                  fi
+                  ;;
+              esac
+              ;;
+            skills)
               case \"\$words[4]\" in
                 add)
-                  local -a plans
-                  plans=(\${(f)\"$(ais _complete plans 2>/dev/null)\"})
-                  if (( \$#plans )); then
-                    compadd \"\$plans[@]\"
+                  local -a skills
+                  skills=(\${(f)\"$(ais _complete cursor-skills 2>/dev/null)\"})
+                  if (( \$#skills )); then
+                    compadd \"\$skills[@]\"
                   fi
                   ;;
               esac
@@ -1845,17 +1865,6 @@ _ais() {
                   ;;
               esac
               ;;
-            plugins)
-              case \"\$words[4]\" in
-                add)
-                  local -a plugins
-                  plugins=(\${(f)\"$(ais _complete claude-plugins 2>/dev/null)\"})
-                  if (( \$#plugins )); then
-                    compadd \"\$plugins[@]\"
-                  fi
-                  ;;
-              esac
-              ;;
           esac
           ;;
       esac
@@ -1875,7 +1884,7 @@ command -v compdef >/dev/null 2>&1 && compdef _ais ais
 complete -c ais -f
 
 # Top-level commands
-complete -c ais -n "__fish_use_subcommand" -a "cursor" -d "Manage Cursor rules and plans"
+complete -c ais -n "__fish_use_subcommand" -a "cursor" -d "Manage Cursor rules, commands, and skills"
 complete -c ais -n "__fish_use_subcommand" -a "copilot" -d "Manage Copilot instructions"
 complete -c ais -n "__fish_use_subcommand" -a "claude" -d "Manage Claude skills, agents, and plugins"
 complete -c ais -n "__fish_use_subcommand" -a "use" -d "Configure rules repository"
@@ -1887,21 +1896,27 @@ complete -c ais -n "__fish_use_subcommand" -a "install" -d "Install all rules (s
 complete -c ais -n "__fish_use_subcommand" -a "completion" -d "Output shell completion script"
 
 # cursor subcommands
-complete -c ais -n "__fish_seen_subcommand_from cursor; and not __fish_seen_subcommand_from add remove install rules plans" -a "add" -d "Add a Cursor rule"
-complete -c ais -n "__fish_seen_subcommand_from cursor; and not __fish_seen_subcommand_from add remove install rules plans" -a "remove" -d "Remove a Cursor rule"
-complete -c ais -n "__fish_seen_subcommand_from cursor; and not __fish_seen_subcommand_from add remove install rules plans" -a "install" -d "Install all Cursor entries"
-complete -c ais -n "__fish_seen_subcommand_from cursor; and not __fish_seen_subcommand_from add remove install rules plans" -a "rules" -d "Manage rules explicitly"
-complete -c ais -n "__fish_seen_subcommand_from cursor; and not __fish_seen_subcommand_from add remove install rules plans" -a "plans" -d "Manage plans"
+complete -c ais -n "__fish_seen_subcommand_from cursor; and not __fish_seen_subcommand_from add remove install rules commands skills" -a "add" -d "Add a Cursor rule"
+complete -c ais -n "__fish_seen_subcommand_from cursor; and not __fish_seen_subcommand_from add remove install rules commands skills" -a "remove" -d "Remove a Cursor rule"
+complete -c ais -n "__fish_seen_subcommand_from cursor; and not __fish_seen_subcommand_from add remove install rules commands skills" -a "install" -d "Install all Cursor entries"
+complete -c ais -n "__fish_seen_subcommand_from cursor; and not __fish_seen_subcommand_from add remove install rules commands skills" -a "rules" -d "Manage rules explicitly"
+complete -c ais -n "__fish_seen_subcommand_from cursor; and not __fish_seen_subcommand_from add remove install rules commands skills" -a "commands" -d "Manage commands"
+complete -c ais -n "__fish_seen_subcommand_from cursor; and not __fish_seen_subcommand_from add remove install rules commands skills" -a "skills" -d "Manage skills"
 
 # cursor rules subcommands
 complete -c ais -n "__fish_seen_subcommand_from cursor; and __fish_seen_subcommand_from rules; and not __fish_seen_subcommand_from add remove install" -a "add" -d "Add a Cursor rule"
 complete -c ais -n "__fish_seen_subcommand_from cursor; and __fish_seen_subcommand_from rules; and not __fish_seen_subcommand_from add remove install" -a "remove" -d "Remove a Cursor rule"
 complete -c ais -n "__fish_seen_subcommand_from cursor; and __fish_seen_subcommand_from rules; and not __fish_seen_subcommand_from add remove install" -a "install" -d "Install all Cursor rules"
 
-# cursor plans subcommands
-complete -c ais -n "__fish_seen_subcommand_from cursor; and __fish_seen_subcommand_from plans; and not __fish_seen_subcommand_from add remove install" -a "add" -d "Add a Cursor plan"
-complete -c ais -n "__fish_seen_subcommand_from cursor; and __fish_seen_subcommand_from plans; and not __fish_seen_subcommand_from add remove install" -a "remove" -d "Remove a Cursor plan"
-complete -c ais -n "__fish_seen_subcommand_from cursor; and __fish_seen_subcommand_from plans; and not __fish_seen_subcommand_from add remove install" -a "install" -d "Install all Cursor plans"
+# cursor commands subcommands
+complete -c ais -n "__fish_seen_subcommand_from cursor; and __fish_seen_subcommand_from commands; and not __fish_seen_subcommand_from add remove install" -a "add" -d "Add a Cursor command"
+complete -c ais -n "__fish_seen_subcommand_from cursor; and __fish_seen_subcommand_from commands; and not __fish_seen_subcommand_from add remove install" -a "remove" -d "Remove a Cursor command"
+complete -c ais -n "__fish_seen_subcommand_from cursor; and __fish_seen_subcommand_from commands; and not __fish_seen_subcommand_from add remove install" -a "install" -d "Install all Cursor commands"
+
+# cursor skills subcommands
+complete -c ais -n "__fish_seen_subcommand_from cursor; and __fish_seen_subcommand_from skills; and not __fish_seen_subcommand_from add remove install" -a "add" -d "Add a Cursor skill"
+complete -c ais -n "__fish_seen_subcommand_from cursor; and __fish_seen_subcommand_from skills; and not __fish_seen_subcommand_from add remove install" -a "remove" -d "Remove a Cursor skill"
+complete -c ais -n "__fish_seen_subcommand_from cursor; and __fish_seen_subcommand_from skills; and not __fish_seen_subcommand_from add remove install" -a "install" -d "Install all Cursor skills"
 
 # copilot subcommands
 complete -c ais -n "__fish_seen_subcommand_from copilot; and not __fish_seen_subcommand_from add remove install" -a "add" -d "Add a Copilot instruction"
@@ -1909,10 +1924,9 @@ complete -c ais -n "__fish_seen_subcommand_from copilot; and not __fish_seen_sub
 complete -c ais -n "__fish_seen_subcommand_from copilot; and not __fish_seen_subcommand_from add remove install" -a "install" -d "Install all Copilot instructions"
 
 # claude subcommands
-complete -c ais -n "__fish_seen_subcommand_from claude; and not __fish_seen_subcommand_from skills agents plugins install" -a "skills" -d "Manage Claude skills"
-complete -c ais -n "__fish_seen_subcommand_from claude; and not __fish_seen_subcommand_from skills agents plugins install" -a "agents" -d "Manage Claude agents"
-complete -c ais -n "__fish_seen_subcommand_from claude; and not __fish_seen_subcommand_from skills agents plugins install" -a "plugins" -d "Manage Claude plugins"
-complete -c ais -n "__fish_seen_subcommand_from claude; and not __fish_seen_subcommand_from skills agents plugins install" -a "install" -d "Install all Claude components"
+complete -c ais -n "__fish_seen_subcommand_from claude; and not __fish_seen_subcommand_from skills agents install" -a "skills" -d "Manage Claude skills"
+complete -c ais -n "__fish_seen_subcommand_from claude; and not __fish_seen_subcommand_from skills agents install" -a "agents" -d "Manage Claude agents"
+complete -c ais -n "__fish_seen_subcommand_from claude; and not __fish_seen_subcommand_from skills agents install" -a "install" -d "Install all Claude components"
 
 # claude skills subcommands
 complete -c ais -n "__fish_seen_subcommand_from claude; and __fish_seen_subcommand_from skills; and not __fish_seen_subcommand_from add remove install" -a "add" -d "Add a Claude skill"
@@ -1924,19 +1938,14 @@ complete -c ais -n "__fish_seen_subcommand_from claude; and __fish_seen_subcomma
 complete -c ais -n "__fish_seen_subcommand_from claude; and __fish_seen_subcommand_from agents; and not __fish_seen_subcommand_from add remove install" -a "remove" -d "Remove a Claude agent"
 complete -c ais -n "__fish_seen_subcommand_from claude; and __fish_seen_subcommand_from agents; and not __fish_seen_subcommand_from add remove install" -a "install" -d "Install all Claude agents"
 
-# claude plugins subcommands
-complete -c ais -n "__fish_seen_subcommand_from claude; and __fish_seen_subcommand_from plugins; and not __fish_seen_subcommand_from add remove install" -a "add" -d "Add a Claude plugin"
-complete -c ais -n "__fish_seen_subcommand_from claude; and __fish_seen_subcommand_from plugins; and not __fish_seen_subcommand_from add remove install" -a "remove" -d "Remove a Claude plugin"
-complete -c ais -n "__fish_seen_subcommand_from claude; and __fish_seen_subcommand_from plugins; and not __fish_seen_subcommand_from add remove install" -a "install" -d "Install all Claude plugins"
 
-# Rule name completion for cursor add / copilot add / claude add
 complete -c ais -n "__fish_seen_subcommand_from cursor; and __fish_seen_subcommand_from add" -a "(ais _complete cursor 2>/dev/null)"
 complete -c ais -n "__fish_seen_subcommand_from cursor; and __fish_seen_subcommand_from rules; and __fish_seen_subcommand_from add" -a "(ais _complete cursor 2>/dev/null)"
-complete -c ais -n "__fish_seen_subcommand_from cursor; and __fish_seen_subcommand_from plans; and __fish_seen_subcommand_from add" -a "(ais _complete plans 2>/dev/null)"
+complete -c ais -n "__fish_seen_subcommand_from cursor; and __fish_seen_subcommand_from commands; and __fish_seen_subcommand_from add" -a "(ais _complete cursor-commands 2>/dev/null)"
+complete -c ais -n "__fish_seen_subcommand_from cursor; and __fish_seen_subcommand_from skills; and __fish_seen_subcommand_from add" -a "(ais _complete cursor-skills 2>/dev/null)"
 complete -c ais -n "__fish_seen_subcommand_from copilot; and __fish_seen_subcommand_from add" -a "(ais _complete copilot 2>/dev/null)"
 complete -c ais -n "__fish_seen_subcommand_from claude; and __fish_seen_subcommand_from skills; and __fish_seen_subcommand_from add" -a "(ais _complete claude-skills 2>/dev/null)"
 complete -c ais -n "__fish_seen_subcommand_from claude; and __fish_seen_subcommand_from agents; and __fish_seen_subcommand_from add" -a "(ais _complete claude-agents 2>/dev/null)"
-complete -c ais -n "__fish_seen_subcommand_from claude; and __fish_seen_subcommand_from plugins; and __fish_seen_subcommand_from add" -a "(ais _complete claude-plugins 2>/dev/null)"
 `;
 
     switch (shell) {

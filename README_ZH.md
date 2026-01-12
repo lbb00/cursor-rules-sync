@@ -1,7 +1,7 @@
 # AI Rules Sync
 
 **AI Rules Sync (AIS)**
-*轻松同步、管理和共享你的 Agent 规则（支持 Cursor 规则、Cursor 计划、Copilot 指令）。*
+*轻松同步、管理和共享你的 Agent 规则（支持 Cursor 规则、Cursor 命令、Copilot 指令）。*
 
 AIS 允许你在 Git 仓库中集中管理规则，并通过软链接将其同步到任意数量的项目中。告别复制粘贴带来的配置漂移。
 
@@ -21,7 +21,7 @@ AIS 允许你在 Git 仓库中集中管理规则，并通过软链接将其同�
 | 工具 | 类型 | 默认源目录 | 目标目录 |
 |------|------|------------|----------|
 | Cursor | Rules | `.cursor/rules/` | `.cursor/rules/` |
-| Cursor | Plans | `.cursor/plans/` | `.cursor/plans/` |
+| Cursor | Commands | `.cursor/commands/` | `.cursor/commands/` |
 | Copilot | Instructions | `.github/instructions/` | `.github/instructions/` |
 
 ## 安装
@@ -34,7 +34,7 @@ npm install -g ai-rules-sync
 
 默认情况下，AIS 会在官方工具配置路径中查找规则：
 - `.cursor/rules/` - Cursor 规则
-- `.cursor/plans/` - Cursor 计划
+- `.cursor/commands/` - Cursor 命令
 - `.github/instructions/` - Copilot 指令
 
 你可以通过在规则仓库中添加 `ai-rules-sync.json` 文件来自定义这些路径：
@@ -45,7 +45,7 @@ npm install -g ai-rules-sync
   "sourceDir": {
     "cursor": {
       "rules": ".cursor/rules",
-      "plans": ".cursor/plans"
+      "commands": ".cursor/commands"
     },
     "copilot": {
       "instructions": ".github/instructions"
@@ -56,7 +56,7 @@ npm install -g ai-rules-sync
 
 - `rootPath`: 可选的全局前缀，应用于所有源目录（默认：空，表示仓库根目录）
 - `sourceDir.cursor.rules`: Cursor 规则的源目录（默认：`.cursor/rules`）
-- `sourceDir.cursor.plans`: Cursor 计划的源目录（默认：`.cursor/plans`）
+- `sourceDir.cursor.commands`: Cursor 命令的源目录（默认：`.cursor/commands`）
 - `sourceDir.copilot.instructions`: Copilot 指令的源目录（默认：`.github/instructions`）
 
 > **注意**：旧的扁平格式（`cursor.rules` 为字符串）仍然支持向后兼容。
@@ -125,26 +125,26 @@ ais cursor add react react-v2 -t other-repo
 ais cursor add react -t https://github.com/user/rules-repo.git
 ```
 
-### 同步 Cursor 计划到项目（.cursor/plans）
+### 同步 Cursor 命令到项目（.cursor/commands）
 
 ```bash
-ais cursor plans add [plan name] [alias]
+ais cursor commands add [command name] [alias]
 ```
 
-该命令会将规则仓库 `.cursor/plans/` 目录下的计划文件同步到项目的 `.cursor/plans/` 目录。
+该命令会将规则仓库 `.cursor/commands/` 目录下的命令文件同步到项目的 `.cursor/commands/` 目录。
 
 ```bash
-# 添加 'feature-plan.md' 计划
-ais cursor plans add feature-plan
+# 添加 'deploy-docs' 命令
+ais cursor commands add deploy-docs
 
-# 添加计划并指定别名
-ais cursor plans add feature-plan my-feature
+# 添加命令并指定别名
+ais cursor commands add deploy-docs deploy-docs-v2
 
-# 移除计划
-ais cursor plans remove my-feature
+# 移除命令
+ais cursor commands remove deploy-docs-v2
 
-# 从配置安装所有计划
-ais cursor plans install
+# 从配置安装所有命令
+ais cursor commands install
 ```
 
 ### 同步 Copilot 指令到项目（.github/instructions）
@@ -166,8 +166,8 @@ ais copilot add [name] [alias]
 # 移除 Cursor 规则
 ais cursor remove [alias]
 
-# 移除 Cursor 计划
-ais cursor plans remove [alias]
+# 移除 Cursor 命令
+ais cursor commands remove [alias]
 
 # 移除 Copilot 指令
 ais copilot remove [alias]
@@ -177,7 +177,7 @@ ais copilot remove [alias]
 
 ### ai-rules-sync.json 结构
 
-`ai-rules-sync.json` 文件用于分别记录 Cursor 规则、计划和 Copilot 指令。它支持简单的字符串格式（仅 URL）和对象格式（包含 URL 和原名）。
+`ai-rules-sync.json` 文件用于分别记录 Cursor 规则、命令和 Copilot 指令。它支持简单的字符串格式（仅 URL）和对象格式（包含 URL 和原名）。
 
 ```json
 {
@@ -186,8 +186,8 @@ ais copilot remove [alias]
       "react": "https://github.com/user/repo.git",
       "react-v2": { "url": "https://github.com/user/another-repo.git", "rule": "react" }
     },
-    "plans": {
-      "feature-plan": "https://github.com/user/repo.git"
+    "commands": {
+      "deploy-docs": "https://github.com/user/repo.git"
     }
   },
   "copilot": {
@@ -207,7 +207,7 @@ ais copilot remove [alias]
 如果你的项目中包含 `ai-rules-sync.json` 文件，你可以使用以下命令一键安装：
 
 ```bash
-# 安装所有 Cursor 规则和计划
+# 安装所有 Cursor 规则、命令和技能
 ais cursor install
 
 # 安装所有 Copilot 指令
@@ -292,7 +292,7 @@ ais completion fish | source
 
 ```bash
 ais cursor add <Tab>         # 列出可用的规则
-ais cursor plans add <Tab>   # 列出可用的计划
+ais cursor commands add <Tab>   # 列出可用的命令
 ais copilot add <Tab>        # 列出可用的指令
 ```
 
@@ -321,7 +321,7 @@ CLI 层
 
 **核心设计原则：**
 
-1. **统一接口**：所有适配器（cursor-rules、cursor-plans、copilot-instructions）实现相同的操作
+1. **统一接口**：所有适配器（cursor-rules、cursor-commands、cursor-skills、copilot-instructions）实现相同的操作
 2. **自动路由**：`findAdapterForAlias()` 函数根据别名的配置位置自动查找正确的适配器
 3. **通用函数**：`addDependencyGeneric()` 和 `removeDependencyGeneric()` 通过 `configPath` 属性与任何适配器配合工作
 4. **可扩展性**：添加新的 AI 工具只需创建新的适配器并在适配器注册表中注册它

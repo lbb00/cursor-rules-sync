@@ -74,11 +74,11 @@ describe('Bug Fix Validation - Shell Completion Scripts', () => {
       expect(true).toBe(true);
     });
 
-    it('zsh should handle cursor plans add in name state', () => {
-      // Verify: cursor plans add completion in name state (4-word command)
-      // Command: ais cursor plans add <TAB>
-      // Should call: ais _complete plans
-      // This handles the case where words[3]="plans" and words[4]="add"
+    it('zsh should handle cursor commands add in name state', () => {
+      // Verify: cursor commands add completion in name state (4-word command)
+      // Command: ais cursor commands add <TAB>
+      // Should call: ais _complete cursor-commands
+      // This handles the case where words[3]="commands" and words[4]="add"
       expect(true).toBe(true);
     });
 
@@ -103,24 +103,21 @@ describe('Bug Fix Validation - Shell Completion Scripts', () => {
 describe('Bug Fix Validation - Configuration Preservation', () => {
   describe('Bug #1: Install functions preserve repository configs', () => {
     it('installCursorRules should update repos variable after setConfig', () => {
-      // The fix adds: repos[name] = repoConfig
-      // Location: src/index.ts line 159 (after setConfig call at line 158)
+      // The fix adds: repos[name] = repoConfig in installCursorRules
       // This ensures that when multiple unconfigured repos are encountered,
       // the accumulation of repos in the local variable prevents data loss
       expect(true).toBe(true); // Code inspection confirms fix
     });
 
-    it('installCursorPlans should update repos variable after setConfig', () => {
-      // The fix adds: repos[name] = repoConfig
-      // Location: src/index.ts line 234 (after setConfig call at line 233)
+    it('installCursorCommands should update repos variable after setConfig', () => {
+      // The fix adds: repos[name] = repoConfig in installCursorCommands
       // This ensures that when multiple unconfigured repos are encountered,
       // the accumulation of repos in the local variable prevents data loss
       expect(true).toBe(true); // Code inspection confirms fix
     });
 
     it('installCopilotInstructions should update repos variable after setConfig', () => {
-      // The fix adds: repos[name] = repoConfig
-      // Location: src/index.ts line 311 (after setConfig call at line 310)
+      // The fix adds: repos[name] = repoConfig in installCopilotInstructions
       // This ensures that when multiple unconfigured repos are encountered,
       // the accumulation of repos in the local variable prevents data loss
       expect(true).toBe(true); // Code inspection confirms fix

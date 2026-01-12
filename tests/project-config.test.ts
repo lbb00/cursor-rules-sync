@@ -100,7 +100,7 @@ describe('getRepoSourceConfig - sourceDir format', () => {
       sourceDir: {
         cursor: {
           rules: '.cursor/rules',
-          plans: '.cursor/plans'
+          commands: '.cursor/commands'
         },
         copilot: {
           instructions: '.github/instructions'
@@ -112,7 +112,7 @@ describe('getRepoSourceConfig - sourceDir format', () => {
 
     expect(config.rootPath).toBe('src');
     expect(config.cursor?.rules).toBe('.cursor/rules');
-    expect(config.cursor?.plans).toBe('.cursor/plans');
+    expect(config.cursor?.commands).toBe('.cursor/commands');
     expect(config.copilot?.instructions).toBe('.github/instructions');
   });
 
@@ -122,7 +122,7 @@ describe('getRepoSourceConfig - sourceDir format', () => {
       rootPath: 'config',
       cursor: {
         rules: 'custom-rules',
-        plans: 'custom-plans'
+        commands: 'custom-commands'
       }
     });
 
@@ -130,7 +130,7 @@ describe('getRepoSourceConfig - sourceDir format', () => {
 
     expect(config.rootPath).toBe('config');
     expect(config.cursor?.rules).toBe('custom-rules');
-    expect(config.cursor?.plans).toBe('custom-plans');
+    expect(config.cursor?.commands).toBe('custom-commands');
   });
 
   it('returns empty config when cursor/copilot are dependency records (not source dirs)', async () => {
@@ -190,12 +190,12 @@ describe('getSourceDir', () => {
     expect(dir).toBe('docs/instructions');
   });
 
-  it('handles cursor plans', () => {
+  it('handles cursor commands', () => {
     const config = {
-      cursor: { plans: 'my-plans' }
+      cursor: { commands: 'my-commands' }
     };
 
-    const dir = getSourceDir(config, 'cursor', 'plans', '.cursor/plans');
-    expect(dir).toBe('my-plans');
+    const dir = getSourceDir(config, 'cursor', 'commands', '.cursor/commands');
+    expect(dir).toBe('my-commands');
   });
 });

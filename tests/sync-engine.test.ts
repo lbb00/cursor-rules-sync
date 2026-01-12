@@ -81,18 +81,18 @@ describe('Sync Engine - source directory behavior', () => {
         expect(fs.ensureSymlink).toHaveBeenCalledWith(expectedSourcePath, expectedTargetPath);
     });
 
-    it('should use default .cursor/plans directory for plans', async () => {
+    it('should use default .cursor/commands directory for commands', async () => {
         vi.mocked(projectConfigModule.getRepoSourceConfig).mockResolvedValue({});
-        vi.mocked(projectConfigModule.getSourceDir).mockReturnValue('.cursor/plans');
+        vi.mocked(projectConfigModule.getSourceDir).mockReturnValue('.cursor/commands');
 
-        await linkEntry(getAdapter('cursor', 'plans'), {
+        await linkEntry(getAdapter('cursor', 'commands'), {
             projectPath: mockProjectPath,
-            name: 'my-plan.md',
+            name: 'my-command.md',
             repo: mockRepo
         });
 
-        const expectedSourcePath = path.join(mockRepo.path, '.cursor/plans', 'my-plan.md');
-        const expectedTargetPath = path.join(path.resolve(mockProjectPath), '.cursor', 'plans', 'my-plan.md');
+        const expectedSourcePath = path.join(mockRepo.path, '.cursor/commands', 'my-command.md');
+        const expectedTargetPath = path.join(path.resolve(mockProjectPath), '.cursor', 'commands', 'my-command.md');
 
         expect(fs.ensureSymlink).toHaveBeenCalledWith(expectedSourcePath, expectedTargetPath);
     });
