@@ -12,8 +12,8 @@
 ## Architecture
 - **Language**: TypeScript (Node.js).
 - **CLI Framework**: Commander.js.
-- **Config**: Stored in `~/.cursor-rules-sync/config.json` (global) and project roots.
-- **Git Operations**: Uses `execa` to run git commands; stores repos in `~/.cursor-rules-sync/repos/`.
+- **Config**: Stored in `~/.ai-rules-sync/config.json` (global) and project roots.
+- **Git Operations**: Uses `execa` to run git commands; stores repos in `~/.ai-rules-sync/repos/`.
 - **Plugin Architecture**: Modular adapter system for different AI tools.
 
 ### Adapter System

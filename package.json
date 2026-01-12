@@ -1,6 +1,7 @@
 {
   "name": "ai-rules-sync",
   "version": "0.3.0",
+  "description": "Synchronize, manage, and share your agent rules (Cursor rules, Cursor plans, Copilot instructions) with ease.",
   "type": "module",
   "bin": {
     "ais": "./dist/index.js"

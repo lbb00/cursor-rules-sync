@@ -1,8 +1,8 @@
 # AI Rules Sync
 
-[![Npm](https://badgen.net/npm/v/cursor-rules-sync)](https://www.npmjs.com/package/cursor-rules-sync)
-[![License](https://img.shields.io/github/license/lbb00/cursor-rules-sync.svg)](https://github.com/lbb00/cursor-rules-sync/blob/master/LICENSE)
-[![Npm download](https://img.shields.io/npm/dw/cursor-rules-sync.svg)](https://www.npmjs.com/package/cursor-rules-sync)
+[![Npm](https://badgen.net/npm/v/ai-rules-sync)](https://www.npmjs.com/package/ai-rules-sync)
+[![License](https://img.shields.io/github/license/lbb00/ai-rules-sync.svg)](https://github.com/lbb00/ai-rules-sync/blob/master/LICENSE)
+[![Npm download](https://img.shields.io/npm/dw/ai-rules-sync.svg)](https://www.npmjs.com/package/ai-rules-sync)
 
 [English](./README.md) | [中文](./README_ZH.md)
 
@@ -90,7 +90,7 @@ All commands support the following global options:
 ais use [git repository url | repo name]
 ```
 
-If `[git repository url]` is not provided, it will search the repo name in the `~/.cursor-rules-sync/config.json` file.
+If `[git repository url]` is not provided, it will search the repo name in the `~/.ai-rules-sync/config.json` file.
 
 ### List all configured repositories
 

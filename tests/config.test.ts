@@ -15,7 +15,7 @@ vi.mock('os', () => ({
 
 describe('Config Module', () => {
   const mockHomeDir = '/mock/home';
-  const mockConfigDir = path.join(mockHomeDir, '.cursor-rules-sync');
+  const mockConfigDir = path.join(mockHomeDir, '.ai-rules-sync');
   const mockConfigFile = path.join(mockConfigDir, 'config.json');
 
   beforeEach(() => {

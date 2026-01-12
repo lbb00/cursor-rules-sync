@@ -2,7 +2,7 @@ import fs from 'fs-extra';
 import path from 'path';
 import os from 'os';
 
-const CONFIG_DIR = path.join(os.homedir(), '.cursor-rules-sync');
+const CONFIG_DIR = path.join(os.homedir(), '.ai-rules-sync');
 const CONFIG_FILE = path.join(CONFIG_DIR, 'config.json');
 const REPOS_BASE_DIR = path.join(CONFIG_DIR, 'repos');
 

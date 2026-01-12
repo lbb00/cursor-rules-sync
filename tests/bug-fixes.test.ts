@@ -1,7 +1,7 @@
 import { describe, it, expect } from 'vitest';
 
 /**
- * Tests for Bug Fixes in cursor-rules-sync
+ * Tests for Bug Fixes in ai-rules-sync
  *
  * Bug #1: Install functions lose repository configs when adding multiple repos (HIGH)
  * Bug #2: Bash completion returns wrong suggestions for copilot commands (MEDIUM)

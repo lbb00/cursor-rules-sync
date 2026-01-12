@@ -755,25 +755,38 @@ program
           console.log(chalk.yellow('Detected legacy "cursor-rules*.json". Migrated to "ai-rules-sync*.json". Consider deleting the legacy files to avoid ambiguity.'))
         }
       } else if (mode === 'claude') {
-        // For Claude, we need to determine the subtype from the config
-        if (cfg.claude?.skills?.[alias]) {
-          await unlinkClaudeSkill(projectPath, alias);
-          const { migrated } = await removeClaudeSkillDependency(projectPath, alias);
-          if (migrated) {
-            console.log(chalk.yellow('Detected legacy "cursor-rules*.json". Migrated to "ai-rules-sync*.json". Consider deleting the legacy files to avoid ambiguity.'))
+        // Try all three subtypes to ensure consistency with explicit commands
+        const subtypes = [
+          { key: 'skills', unlink: unlinkClaudeSkill, remove: removeClaudeSkillDependency, name: 'skill' },
+          { key: 'agents', unlink: unlinkClaudeAgent, remove: removeClaudeAgentDependency, name: 'agent' },
+          { key: 'plugins', unlink: unlinkClaudePlugin, remove: removeClaudePluginDependency, name: 'plugin' }
+        ] as const;
+
+        let foundAny = false;
+        let anyMigrated = false;
+
+        for (const subtype of subtypes) {
+          // Always try to unlink (handles symlinks that exist without config entry)
+          await subtype.unlink(projectPath, alias);
+
+          // Always try to remove from config
+          const { removedFrom, migrated } = await subtype.remove(projectPath, alias);
+
+          if (removedFrom.length > 0) {
+            foundAny = true;
+            console.log(chalk.green(`Removed ${subtype.name} "${alias}" from configuration: ${removedFrom.join(', ')}`));
           }
-        } else if (cfg.claude?.agents?.[alias]) {
-          await unlinkClaudeAgent(projectPath, alias);
-          const { migrated } = await removeClaudeAgentDependency(projectPath, alias);
-          if (migrated) {
-            console.log(chalk.yellow('Detected legacy "cursor-rules*.json". Migrated to "ai-rules-sync*.json". Consider deleting the legacy files to avoid ambiguity.'))
-          }
-        } else if (cfg.claude?.plugins?.[alias]) {
-          await unlinkClaudePlugin(projectPath, alias);
-          const { migrated } = await removeClaudePluginDependency(projectPath, alias);
-          if (migrated) {
-            console.log(chalk.yellow('Detected legacy "cursor-rules*.json". Migrated to "ai-rules-sync*.json". Consider deleting the legacy files to avoid ambiguity.'))
-          }
+
+          if (migrated) anyMigrated = true;
+        }
+
+        // Provide feedback if nothing was found
+        if (!foundAny) {
+          console.log(chalk.yellow(`Claude entry "${alias}" was not found in any configuration file.`));
+        }
+
+        if (anyMigrated) {
+          console.log(chalk.yellow('Detected legacy "cursor-rules*.json". Migrated to "ai-rules-sync*.json". Consider deleting the legacy files to avoid ambiguity.'))
         }
       }
     } catch (error: any) {
