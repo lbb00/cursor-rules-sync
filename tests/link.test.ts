@@ -64,7 +64,7 @@ describe('Link Module', () => {
         });
 
         await expect(linkRule(mockProjectPath, 'missing-rule', mockRepo))
-            .rejects.toThrow('Rule "missing-rule" not found in repository "test-repo".');
+            .rejects.toThrow('Rule "missing-rule" not found in repository.');
     });
 });
 

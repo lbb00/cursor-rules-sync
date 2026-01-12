@@ -15,6 +15,7 @@ export interface RepoConfig {
 export interface Config {
   currentRepo?: string; // name of the current repo
   repos: Record<string, RepoConfig>;
+  completionInstalled?: boolean; // whether shell completion setup has been handled
   // Deprecated field for migration
   repoUrl?: string;
 }

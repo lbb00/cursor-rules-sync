@@ -1,0 +1,204 @@
+import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
+import path from 'path';
+import fs from 'fs-extra';
+import * as completionModule from '../src/completion.js';
+import * as configModule from '../src/config.js';
+
+// Mock fs-extra
+vi.mock('fs-extra');
+
+// Mock os
+vi.mock('os', () => ({
+  default: {
+    homedir: () => '/mock/home'
+  },
+  homedir: () => '/mock/home'
+}));
+
+// Mock config module
+vi.mock('../src/config.js', () => ({
+  getConfig: vi.fn(),
+  setConfig: vi.fn()
+}));
+
+describe('Completion Module', () => {
+  const mockHomeDir = '/mock/home';
+
+  beforeEach(() => {
+    vi.resetAllMocks();
+  });
+
+  describe('detectShell', () => {
+    const originalEnv = process.env;
+
+    beforeEach(() => {
+      process.env = { ...originalEnv };
+    });
+
+    afterEach(() => {
+      process.env = originalEnv;
+    });
+
+    it('should detect zsh shell', () => {
+      process.env.SHELL = '/bin/zsh';
+      expect(completionModule.detectShell()).toBe('zsh');
+    });
+
+    it('should detect bash shell', () => {
+      process.env.SHELL = '/bin/bash';
+      expect(completionModule.detectShell()).toBe('bash');
+    });
+
+    it('should detect fish shell', () => {
+      process.env.SHELL = '/usr/bin/fish';
+      expect(completionModule.detectShell()).toBe('fish');
+    });
+
+    it('should return unknown for unrecognized shell', () => {
+      process.env.SHELL = '/bin/tcsh';
+      expect(completionModule.detectShell()).toBe('unknown');
+    });
+
+    it('should return unknown when SHELL is not set', () => {
+      delete process.env.SHELL;
+      expect(completionModule.detectShell()).toBe('unknown');
+    });
+  });
+
+  describe('getShellConfigPath', () => {
+    const originalPlatform = process.platform;
+
+    afterEach(() => {
+      Object.defineProperty(process, 'platform', { value: originalPlatform });
+    });
+
+    it('should return .zshrc for zsh', () => {
+      const result = completionModule.getShellConfigPath('zsh');
+      expect(result).toBe(path.join(mockHomeDir, '.zshrc'));
+    });
+
+    it('should return fish config path for fish', () => {
+      const result = completionModule.getShellConfigPath('fish');
+      expect(result).toBe(path.join(mockHomeDir, '.config', 'fish', 'config.fish'));
+    });
+
+    it('should return .bashrc for bash on Linux', () => {
+      Object.defineProperty(process, 'platform', { value: 'linux' });
+      const result = completionModule.getShellConfigPath('bash');
+      expect(result).toBe(path.join(mockHomeDir, '.bashrc'));
+    });
+
+    it('should return .bash_profile for bash on macOS if it exists', () => {
+      Object.defineProperty(process, 'platform', { value: 'darwin' });
+      vi.mocked(fs.existsSync).mockReturnValue(true);
+      const result = completionModule.getShellConfigPath('bash');
+      expect(result).toBe(path.join(mockHomeDir, '.bash_profile'));
+    });
+
+    it('should return .bashrc for bash on macOS if .bash_profile does not exist', () => {
+      Object.defineProperty(process, 'platform', { value: 'darwin' });
+      vi.mocked(fs.existsSync).mockReturnValue(false);
+      const result = completionModule.getShellConfigPath('bash');
+      expect(result).toBe(path.join(mockHomeDir, '.bashrc'));
+    });
+
+    it('should return null for unknown shell', () => {
+      const result = completionModule.getShellConfigPath('unknown');
+      expect(result).toBeNull();
+    });
+  });
+
+  describe('getCompletionSnippet', () => {
+    it('should return fish-style snippet for fish', () => {
+      const result = completionModule.getCompletionSnippet('fish');
+      expect(result).toContain('ais completion fish | source');
+      expect(result).toContain('# ais shell completion');
+    });
+
+    it('should return eval-style snippet for bash', () => {
+      const result = completionModule.getCompletionSnippet('bash');
+      expect(result).toContain('eval "$(ais completion)"');
+      expect(result).toContain('# ais shell completion');
+    });
+
+    it('should return file-based snippet for zsh', () => {
+      const result = completionModule.getCompletionSnippet('zsh');
+      expect(result).toContain('ais completion > ~/.zsh/ais_completion.zsh');
+      expect(result).toContain('source ~/.zsh/ais_completion.zsh');
+      expect(result).toContain('# ais shell completion');
+    });
+  });
+
+  describe('isCompletionInstalled', () => {
+    it('should return false if config file does not exist', async () => {
+      vi.mocked(fs.pathExists).mockResolvedValue(false);
+      const result = await completionModule.isCompletionInstalled('/mock/path/.zshrc');
+      expect(result).toBe(false);
+    });
+
+    it('should return true if config contains ais completion marker', async () => {
+      vi.mocked(fs.pathExists).mockResolvedValue(true);
+      vi.mocked(fs.readFile).mockResolvedValue('# some config\n# ais shell completion\neval "$(ais completion)"');
+      const result = await completionModule.isCompletionInstalled('/mock/path/.zshrc');
+      expect(result).toBe(true);
+    });
+
+    it('should return true if config contains ais completion command', async () => {
+      vi.mocked(fs.pathExists).mockResolvedValue(true);
+      vi.mocked(fs.readFile).mockResolvedValue('# some config\neval "$(ais completion)"');
+      const result = await completionModule.isCompletionInstalled('/mock/path/.zshrc');
+      expect(result).toBe(true);
+    });
+
+    it('should return false if config does not contain ais completion', async () => {
+      vi.mocked(fs.pathExists).mockResolvedValue(true);
+      vi.mocked(fs.readFile).mockResolvedValue('# some other config\nexport PATH=$PATH:/usr/local/bin');
+      const result = await completionModule.isCompletionInstalled('/mock/path/.zshrc');
+      expect(result).toBe(false);
+    });
+  });
+
+  describe('installCompletionToFile', () => {
+    it('should return success false for unknown shell', async () => {
+      const result = await completionModule.installCompletionToFile('unknown');
+      expect(result).toEqual({ success: false, configPath: null, alreadyInstalled: false });
+    });
+
+    it('should return alreadyInstalled true if completion exists', async () => {
+      vi.mocked(fs.pathExists).mockResolvedValue(true);
+      vi.mocked(fs.readFile).mockResolvedValue('# ais shell completion\neval "$(ais completion)"');
+
+      const result = await completionModule.installCompletionToFile('zsh');
+      expect(result.alreadyInstalled).toBe(true);
+      expect(result.success).toBe(true);
+    });
+
+    it('should append completion snippet if not installed', async () => {
+      vi.mocked(fs.pathExists).mockResolvedValue(true);
+      vi.mocked(fs.readFile).mockResolvedValue('# existing config');
+      vi.mocked(fs.ensureDir).mockResolvedValue(undefined);
+      vi.mocked(fs.appendFile).mockResolvedValue(undefined);
+
+      const result = await completionModule.installCompletionToFile('zsh');
+
+      expect(result.success).toBe(true);
+      expect(result.alreadyInstalled).toBe(false);
+      expect(fs.appendFile).toHaveBeenCalledWith(
+        path.join(mockHomeDir, '.zshrc'),
+        expect.stringContaining('# ais shell completion')
+      );
+    });
+
+    it('should create parent directory for fish config', async () => {
+      vi.mocked(fs.pathExists).mockResolvedValue(false);
+      vi.mocked(fs.ensureDir).mockResolvedValue(undefined);
+      vi.mocked(fs.appendFile).mockResolvedValue(undefined);
+
+      await completionModule.installCompletionToFile('fish');
+
+      expect(fs.ensureDir).toHaveBeenCalledWith(
+        path.join(mockHomeDir, '.config', 'fish')
+      );
+    });
+  });
+});

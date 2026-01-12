@@ -1,9 +1,9 @@
 {
-  "name": "cursor-rules-sync",
+  "name": "ai-rules-sync",
   "version": "0.2.0",
   "type": "module",
   "bin": {
-    "crs": "./dist/index.js"
+    "ais": "./dist/index.js"
   },
   "scripts": {
     "build": "tsc",
@@ -18,7 +18,9 @@
     "url": "git+https://github.com/lbb00/cursor-rules-sync.git"
   },
   "keywords": [
+    "ai",
     "cursor",
+    "copilot",
     "rules",
     "sync"
   ],

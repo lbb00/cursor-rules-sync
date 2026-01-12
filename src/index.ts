@@ -5,13 +5,15 @@ import path from 'path'
 import fs from 'fs-extra'
 import { getConfig, setConfig, getReposBaseDir, getCurrentRepo, RepoConfig } from './config.js'
 import { cloneOrUpdateRepo, runGitCommand } from './git.js'
-import { linkRule, unlinkRule } from './link.js'
+import { linkCopilotInstruction, linkRule, unlinkCopilotInstruction, unlinkRule, linkPlan, unlinkPlan } from './link.js'
 import { addIgnoreEntry } from './utils.js'
-import { addDependency, removeDependency, getProjectConfig, getCombinedProjectConfig } from './project-config.js'
+import { addCopilotDependency, addCursorDependency, removeCopilotDependency, removeCursorDependency, getCombinedProjectConfig, getConfigSource, getProjectConfig, addPlanDependency, removePlanDependency } from './project-config.js'
+import { stripCopilotSuffix } from './adapters/index.js'
+import { checkAndPromptCompletion, forceInstallCompletion } from './completion.js'
 
 const program = new Command()
 
-program.name('crs').description('Cursor Rules Sync - Sync cursor rules from git repository').version('1.0.0')
+program.name('ais').description('AI Rules Sync - Sync agent rules from git repository').version('1.0.0')
     .option('-t, --target <repoName>', 'Specify target rule repository (name or URL)');
 
 // Helper to get repo config
@@ -48,13 +50,6 @@ async function getTargetRepo(options: any): Promise<RepoConfig> {
             name = `${name}-${Date.now()}`;
         }
 
-        // If name exists and URL matches, just use it (already handled by step 1/loop above?
-        // No, step 1 checked key=target. The loop checked value.url=target.
-        // If we get here, target is not a key, and target URL is not in values.
-        // But 'name' derived from target might match a key with DIFFERENT url (handled by collision check)
-        // or same URL (should be handled by loop, but loop might miss if config structure is weird? Unlikely).
-        // Let's proceed with adding.
-
         const repoDir = path.join(getReposBaseDir(), name);
         const newRepo: RepoConfig = {
             name,
@@ -75,9 +70,275 @@ async function getTargetRepo(options: any): Promise<RepoConfig> {
 
   const currentRepo = await getCurrentRepo();
   if (!currentRepo) {
-    throw new Error('No repository configured. Please run "crs use [url]" first.');
+    throw new Error('No repository configured. Please run "ais use [url]" first.');
   }
   return currentRepo;
+}
+
+type DefaultMode = 'cursor' | 'copilot' | 'ambiguous' | 'none';
+
+async function inferDefaultMode(projectPath: string): Promise<DefaultMode> {
+  const cfg = await getCombinedProjectConfig(projectPath);
+  const cursorCount = Object.keys(cfg.cursor?.rules || {}).length + Object.keys(cfg.cursor?.plans || {}).length;
+  const copilotCount = Object.keys(cfg.copilot?.instructions || {}).length;
+
+  if (cursorCount > 0 && copilotCount === 0) return 'cursor';
+  if (copilotCount > 0 && cursorCount === 0) return 'copilot';
+  if (cursorCount === 0 && copilotCount === 0) return 'none';
+  return 'ambiguous';
+}
+
+function requireExplicitMode(mode: DefaultMode): never {
+  if (mode === 'ambiguous') {
+    throw new Error('Both Cursor and Copilot configs exist in this project. Please use "ais cursor ..." or "ais copilot ..." explicitly.');
+  }
+  throw new Error('No default mode could be inferred. Please use "ais cursor ..." or "ais copilot ..." explicitly.');
+}
+
+async function installCursorRules(projectPath: string): Promise<void> {
+  const config = await getCombinedProjectConfig(projectPath)
+  const rules = config.cursor?.rules
+
+  if (!rules || Object.keys(rules).length === 0) {
+    console.log(chalk.yellow('No Cursor rules found in ai-rules-sync*.json (or legacy cursor-rules*.json).'))
+    return
+  }
+
+  const globalConfig = await getConfig()
+  const repos = globalConfig.repos || {}
+
+  const source = await getConfigSource(projectPath)
+  const localFileName = source === 'new' ? 'ai-rules-sync.local.json' : 'cursor-rules.local.json'
+  let localCursorRules: any = {}
+  const localPath = path.join(projectPath, localFileName)
+  if (await fs.pathExists(localPath)) {
+    try {
+      const raw = await fs.readJson(localPath)
+      localCursorRules = source === 'new' ? (raw?.cursor?.rules || {}) : (raw?.rules || {})
+    } catch {
+      localCursorRules = {}
+    }
+  }
+
+  for (const [key, value] of Object.entries(rules)) {
+    let repoUrl: string;
+    let ruleName: string;
+    let alias: string | undefined;
+
+    if (typeof value === 'string') {
+      repoUrl = value;
+      ruleName = key;
+      alias = undefined;
+    } else {
+      repoUrl = (value as any).url;
+      ruleName = (value as any).rule || key;
+      alias = key;
+    }
+
+    console.log(chalk.blue(`Installing Cursor rule "${ruleName}" (as "${key}") from ${repoUrl}...`))
+
+    let repoConfig: RepoConfig | undefined
+    for (const k in repos) {
+      if (repos[k].url === repoUrl) {
+        repoConfig = repos[k]
+        break
+      }
+    }
+
+    if (!repoConfig) {
+      console.log(chalk.yellow(`Repository for ${ruleName} not found locally. Configuring...`))
+
+      let name = path.basename(repoUrl, '.git')
+      if (!name) name = `repo-${Date.now()}`
+      if (repos[name]) name = `${name}-${Date.now()}`
+
+      const repoDir = path.join(getReposBaseDir(), name)
+      repoConfig = { name, url: repoUrl, path: repoDir }
+
+      await setConfig({ repos: { ...repos, [name]: repoConfig } })
+      await cloneOrUpdateRepo(repoConfig)
+    } else {
+      if (!(await fs.pathExists(repoConfig.path))) {
+        await cloneOrUpdateRepo(repoConfig)
+      }
+    }
+
+    const isLocal = Object.prototype.hasOwnProperty.call(localCursorRules || {}, key)
+    await linkRule(projectPath, ruleName, repoConfig, alias, isLocal)
+  }
+
+  console.log(chalk.green('All Cursor rules installed successfully.'))
+}
+
+async function installCursorPlans(projectPath: string): Promise<void> {
+  const config = await getCombinedProjectConfig(projectPath)
+  const plans = config.cursor?.plans
+
+  if (!plans || Object.keys(plans).length === 0) {
+    console.log(chalk.yellow('No Cursor plans found in ai-rules-sync*.json.'))
+    return
+  }
+
+  const globalConfig = await getConfig()
+  const repos = globalConfig.repos || {}
+
+  const source = await getConfigSource(projectPath)
+  const localFileName = source === 'new' ? 'ai-rules-sync.local.json' : 'cursor-rules.local.json'
+  let localPlans: any = {}
+  const localPath = path.join(projectPath, localFileName)
+  if (await fs.pathExists(localPath)) {
+    try {
+      const raw = await fs.readJson(localPath)
+      localPlans = source === 'new' ? (raw?.cursor?.plans || {}) : {}
+    } catch {
+      localPlans = {}
+    }
+  }
+
+  for (const [key, value] of Object.entries(plans)) {
+    let repoUrl: string;
+    let planName: string;
+    let alias: string | undefined;
+
+    if (typeof value === 'string') {
+      repoUrl = value;
+      planName = key;
+      alias = undefined;
+    } else {
+      repoUrl = (value as any).url;
+      planName = (value as any).rule || key;
+      alias = key;
+    }
+
+    console.log(chalk.blue(`Installing Cursor plan "${planName}" (as "${key}") from ${repoUrl}...`))
+
+    let repoConfig: RepoConfig | undefined
+    for (const k in repos) {
+      if (repos[k].url === repoUrl) {
+        repoConfig = repos[k]
+        break
+      }
+    }
+
+    if (!repoConfig) {
+      console.log(chalk.yellow(`Repository for ${planName} not found locally. Configuring...`))
+
+      let name = path.basename(repoUrl, '.git')
+      if (!name) name = `repo-${Date.now()}`
+      if (repos[name]) name = `${name}-${Date.now()}`
+
+      const repoDir = path.join(getReposBaseDir(), name)
+      repoConfig = { name, url: repoUrl, path: repoDir }
+
+      await setConfig({ repos: { ...repos, [name]: repoConfig } })
+      await cloneOrUpdateRepo(repoConfig)
+    } else {
+      if (!(await fs.pathExists(repoConfig.path))) {
+        await cloneOrUpdateRepo(repoConfig)
+      }
+    }
+
+    const isLocal = Object.prototype.hasOwnProperty.call(localPlans || {}, key)
+    await linkPlan(projectPath, planName, repoConfig, alias, isLocal)
+  }
+
+  console.log(chalk.green('All Cursor plans installed successfully.'))
+}
+
+async function installCopilotInstructions(projectPath: string): Promise<void> {
+  const config = await getCombinedProjectConfig(projectPath)
+  const instructions = config.copilot?.instructions
+
+  if (!instructions || Object.keys(instructions).length === 0) {
+    console.log(chalk.yellow('No Copilot instructions found in ai-rules-sync*.json.'))
+    return
+  }
+
+  const globalConfig = await getConfig()
+  const repos = globalConfig.repos || {}
+
+  const source = await getConfigSource(projectPath)
+  const localFileName = source === 'new' ? 'ai-rules-sync.local.json' : 'cursor-rules.local.json'
+  let localInstructions: any = {}
+  const localPath = path.join(projectPath, localFileName)
+  if (await fs.pathExists(localPath)) {
+    try {
+      const raw = await fs.readJson(localPath)
+      localInstructions = source === 'new' ? (raw?.copilot?.instructions || {}) : {}
+    } catch {
+      localInstructions = {}
+    }
+  }
+
+  for (const [key, value] of Object.entries(instructions)) {
+    let repoUrl: string;
+    let ruleName: string;
+    let alias: string | undefined;
+
+    if (typeof value === 'string') {
+      repoUrl = value;
+      ruleName = key;
+      alias = undefined;
+    } else {
+      repoUrl = (value as any).url;
+      ruleName = (value as any).rule || key;
+      alias = key;
+    }
+
+    console.log(chalk.blue(`Installing Copilot instruction "${ruleName}" (as "${key}") from ${repoUrl}...`))
+
+    let repoConfig: RepoConfig | undefined
+    for (const k in repos) {
+      if (repos[k].url === repoUrl) {
+        repoConfig = repos[k]
+        break
+      }
+    }
+
+    if (!repoConfig) {
+      console.log(chalk.yellow(`Repository for ${ruleName} not found locally. Configuring...`))
+
+      let name = path.basename(repoUrl, '.git')
+      if (!name) name = `repo-${Date.now()}`
+      if (repos[name]) name = `${name}-${Date.now()}`
+
+      const repoDir = path.join(getReposBaseDir(), name)
+      repoConfig = { name, url: repoUrl, path: repoDir }
+
+      await setConfig({ repos: { ...repos, [name]: repoConfig } })
+      await cloneOrUpdateRepo(repoConfig)
+    } else {
+      if (!(await fs.pathExists(repoConfig.path))) {
+        await cloneOrUpdateRepo(repoConfig)
+      }
+    }
+
+    const isLocal = Object.prototype.hasOwnProperty.call(localInstructions || {}, key)
+    await linkCopilotInstruction(projectPath, ruleName, repoConfig, alias, isLocal)
+  }
+
+  console.log(chalk.green('All Copilot instructions installed successfully.'))
+}
+
+function resolveCopilotAliasFromConfig(input: string, keys: string[]): string {
+  if (input.endsWith('.md') || input.endsWith('.instructions.md')) return input;
+  const matches = keys.filter(k => stripCopilotSuffix(k) === input);
+  if (matches.length === 1) return matches[0];
+  if (matches.length > 1) throw new Error(`Alias "${input}" matches multiple Copilot entries: ${matches.join(', ')}. Please specify the suffix explicitly.`);
+  return input;
+}
+
+function stripPlanSuffix(name: string): string {
+  if (name.endsWith('.md')) return name.slice(0, -'.md'.length);
+  return name;
+}
+
+function resolvePlanAliasFromConfig(input: string, keys: string[]): string {
+  if (input.endsWith('.md')) return input;
+  const matches = keys.filter(k => stripPlanSuffix(k) === input);
+  if (matches.length === 1) return matches[0];
+  if (matches.length > 1) throw new Error(`Alias "${input}" matches multiple plan entries: ${matches.join(', ')}. Please specify the suffix explicitly.`);
+  return input;
 }
 
 program
@@ -112,8 +373,6 @@ program
 
       if (isUrl) {
         const url = urlOrName
-        // Derive name
-        // e.g. https://github.com/foo/bar.git -> bar
         let name = path.basename(url, '.git')
         if (!name) name = 'default'
 
@@ -142,7 +401,7 @@ program
       } else {
         // Provided argument is not a URL and not found in config
         console.error(chalk.red(`Error: Repository "${urlOrName}" not found in configuration.`))
-        console.log(chalk.yellow(`Use "crs use <url>" to add a new repository.`))
+        console.log(chalk.yellow(`Use "ais use <url>" to add a new repository.`))
         process.exit(1)
       }
     } catch (error: any) {
@@ -160,7 +419,7 @@ program
     const names = Object.keys(repos)
 
     if (names.length === 0) {
-      console.log(chalk.yellow('No repositories configured. Use "crs use [url]" to configure.'))
+      console.log(chalk.yellow('No repositories configured. Use "ais use [url]" to configure.'))
       return
     }
 
@@ -176,19 +435,137 @@ program
     }
   })
 
+// Top-level shortcuts: allowed ONLY when the project config implies a single mode.
 program
   .command('add')
-  .description('Sync cursor rules to project')
+  .description('Add an entry (auto-detects cursor/copilot if unambiguous)')
+  .argument('<name>', 'Rule/Instruction name in the rules repo (under rootPath)')
+  .argument('[alias]', 'Alias in the project')
+  .option('-l, --local', 'Add to ai-rules-sync.local.json (private)')
+  .action(async (name, alias, options) => {
+    try {
+      const projectPath = process.cwd();
+      const mode = await inferDefaultMode(projectPath);
+      if (mode === 'none' || mode === 'ambiguous') requireExplicitMode(mode);
+
+      const opts = program.opts();
+      const currentRepo = await getTargetRepo(opts);
+      const isLocal = options.local;
+
+      if (mode === 'cursor') {
+        await linkRule(projectPath, name, currentRepo, alias, isLocal);
+        const { migrated } = await addCursorDependency(projectPath, name, currentRepo.url, alias, isLocal);
+        if (migrated) {
+          console.log(chalk.yellow('Detected legacy "cursor-rules*.json". Migrated to "ai-rules-sync*.json". Consider deleting the legacy files to avoid ambiguity.'))
+        }
+      } else {
+        const { sourceName, targetName } = await linkCopilotInstruction(projectPath, name, currentRepo, alias, isLocal);
+        const depAlias = targetName === sourceName ? undefined : targetName;
+        const { migrated } = await addCopilotDependency(projectPath, sourceName, currentRepo.url, depAlias, isLocal);
+        if (migrated) {
+          console.log(chalk.yellow('Detected legacy "cursor-rules*.json". Migrated to "ai-rules-sync*.json". Consider deleting the legacy files to avoid ambiguity.'))
+        }
+      }
+
+      if (isLocal) {
+        const gitignorePath = path.join(projectPath, '.gitignore');
+        const added = await addIgnoreEntry(gitignorePath, 'ai-rules-sync.local.json', '# Local AI Rules Sync Config');
+        if (added) {
+          console.log(chalk.green(`Added "ai-rules-sync.local.json" to .gitignore.`));
+        }
+      }
+    } catch (error: any) {
+      console.error(chalk.red('Error adding entry:'), error.message)
+      process.exit(1)
+    }
+  })
+
+program
+  .command('remove')
+  .description('Remove an entry (auto-detects cursor/copilot if unambiguous)')
+  .argument('<alias>', 'Alias/name in the project to remove')
+  .action(async (alias) => {
+    try {
+      const projectPath = process.cwd();
+      const cfg = await getCombinedProjectConfig(projectPath);
+
+      const inCursor = Object.prototype.hasOwnProperty.call(cfg.cursor?.rules || {}, alias) ||
+                       Object.prototype.hasOwnProperty.call(cfg.cursor?.plans || {}, alias);
+      const inCopilot = Object.prototype.hasOwnProperty.call(cfg.copilot?.instructions || {}, alias);
+
+      if (inCursor && inCopilot) {
+        throw new Error(`Alias "${alias}" exists in both Cursor and Copilot configs. Please use "ais cursor remove" or "ais copilot remove" explicitly.`);
+      }
+
+      let mode: DefaultMode = 'none';
+      if (inCursor) mode = 'cursor';
+      else if (inCopilot) mode = 'copilot';
+      else mode = await inferDefaultMode(projectPath);
+
+      if (mode === 'none' || mode === 'ambiguous') requireExplicitMode(mode);
+
+      if (mode === 'cursor') {
+        await unlinkRule(projectPath, alias);
+        const { migrated } = await removeCursorDependency(projectPath, alias);
+        if (migrated) {
+          console.log(chalk.yellow('Detected legacy "cursor-rules*.json". Migrated to "ai-rules-sync*.json". Consider deleting the legacy files to avoid ambiguity.'))
+        }
+      } else {
+        const resolved = resolveCopilotAliasFromConfig(alias, Object.keys(cfg.copilot?.instructions || {}));
+        await unlinkCopilotInstruction(projectPath, resolved);
+        const { migrated } = await removeCopilotDependency(projectPath, resolved);
+        if (migrated) {
+          console.log(chalk.yellow('Detected legacy "cursor-rules*.json". Migrated to "ai-rules-sync*.json". Consider deleting the legacy files to avoid ambiguity.'))
+        }
+      }
+    } catch (error: any) {
+      console.error(chalk.red('Error removing entry:'), error.message)
+      process.exit(1)
+    }
+  })
+
+program
+  .command('install')
+  .description('Install all entries from config (cursor + copilot)')
+  .action(async () => {
+    try {
+      const projectPath = process.cwd();
+      const mode = await inferDefaultMode(projectPath);
+
+      if (mode === 'none') {
+        console.log(chalk.yellow('No Cursor or Copilot config found in ai-rules-sync*.json (or legacy cursor-rules*.json).'))
+        return
+      }
+
+      if (mode === 'cursor' || mode === 'ambiguous') {
+        await installCursorRules(projectPath)
+        await installCursorPlans(projectPath)
+      }
+      if (mode === 'copilot' || mode === 'ambiguous') {
+        await installCopilotInstructions(projectPath)
+      }
+    } catch (error: any) {
+      console.error(chalk.red('Error installing entries:'), error.message)
+      process.exit(1)
+    }
+  })
+
+// ============ Cursor command group ============
+const cursor = program
+  .command('cursor')
+  .description('Manage Cursor rules and plans in a project')
+
+// Default: cursor add = cursor rules add
+cursor
+  .command('add')
+  .description('Sync Cursor rules to project (.cursor/rules/...)')
   .argument('<ruleName>', 'Name of the rule directory in the rules repo')
   .argument('[alias]', 'Alias for the rule name (e.g. react-v2)')
-  .option('-l, --local', 'Add to cursor-rules.local.json (private rule)')
+  .option('-l, --local', 'Add to ai-rules-sync.local.json (private rule)')
   .action(async (ruleName, alias, options) => {
     try {
       const opts = program.opts();
       const currentRepo = await getTargetRepo(opts);
-
-      // Project path is always current directory in this simplified model
-      // The second argument is now strictly the ALIAS (target name)
       const projectPath = process.cwd();
 
       console.log(chalk.gray(`Using repository: ${chalk.cyan(currentRepo.name)} (${currentRepo.url})`))
@@ -196,41 +573,39 @@ program
       const isLocal = options.local;
       await linkRule(projectPath, ruleName, currentRepo, alias, isLocal)
 
-      // Save dependency
-      await addDependency(projectPath, ruleName, currentRepo.url, alias, isLocal)
+      const { migrated } = await addCursorDependency(projectPath, ruleName, currentRepo.url, alias, isLocal)
 
-      const configFileName = isLocal ? 'cursor-rules.local.json' : 'cursor-rules.json';
+      const configFileName = isLocal ? 'ai-rules-sync.local.json' : 'ai-rules-sync.json';
       console.log(chalk.green(`Updated ${configFileName} dependency.`))
 
-      if (isLocal) {
-          // Add cursor-rules.local.json to .gitignore if not present
-          const gitignorePath = path.join(projectPath, '.gitignore');
-          const added = await addIgnoreEntry(gitignorePath, 'cursor-rules.local.json', '# Local Cursor Rules Config');
-
-          if (added) {
-            console.log(chalk.green(`Added "cursor-rules.local.json" to .gitignore.`));
-          }
+      if (migrated) {
+        console.log(chalk.yellow('Detected legacy "cursor-rules*.json". Migrated to "ai-rules-sync*.json". Consider deleting the legacy files to avoid ambiguity.'))
       }
 
+      if (isLocal) {
+          const gitignorePath = path.join(projectPath, '.gitignore');
+        const added = await addIgnoreEntry(gitignorePath, 'ai-rules-sync.local.json', '# Local AI Rules Sync Config');
+          if (added) {
+          console.log(chalk.green(`Added "ai-rules-sync.local.json" to .gitignore.`));
+          }
+      }
     } catch (error: any) {
       console.error(chalk.red('Error adding rule:'), error.message)
       process.exit(1)
     }
   })
 
-program
+cursor
   .command('remove')
-  .description('Remove a cursor rule from project')
+  .description('Remove a Cursor rule from project')
   .argument('<alias>', 'Alias (or name) of the rule to remove')
   .action(async (alias) => {
     try {
       const projectPath = process.cwd();
 
-      // 1. Remove symlink and ignore entry
       await unlinkRule(projectPath, alias);
 
-      // 2. Remove dependency from config (both global and local)
-      const removedFrom = await removeDependency(projectPath, alias);
+      const { removedFrom, migrated } = await removeCursorDependency(projectPath, alias);
 
       if (removedFrom.length > 0) {
         console.log(chalk.green(`Removed rule "${alias}" from configuration: ${removedFrom.join(', ')}`));
@@ -238,114 +613,280 @@ program
         console.log(chalk.yellow(`Rule "${alias}" was not found in any configuration file.`));
       }
 
+      if (migrated) {
+        console.log(chalk.yellow('Detected legacy "cursor-rules*.json". Migrated to "ai-rules-sync*.json". Consider deleting the legacy files to avoid ambiguity.'))
+      }
     } catch (error: any) {
       console.error(chalk.red('Error removing rule:'), error.message)
       process.exit(1)
     }
   })
 
-program
+cursor
   .command('install')
-  .description('Install all rules from cursor-rules.json')
+  .description('Install all Cursor rules and plans from ai-rules-sync.json')
     .action(async () => {
       try {
-        const projectPath = process.cwd();
-        const config = await getCombinedProjectConfig(projectPath)
-        const rules = config.rules
-
-        if (!rules || Object.keys(rules).length === 0) {
-          console.log(chalk.yellow('No rules found in cursor-rules.json or cursor-rules.local.json.'))
-          return
-        }
-
-        const globalConfig = await getConfig()
-        const repos = globalConfig.repos || {}
-
-        for (const [key, value] of Object.entries(rules)) {
-          let repoUrl: string;
-          let ruleName: string;
-          let alias: string | undefined;
-
-          // Parse value which can be string or object
-          if (typeof value === 'string') {
-              repoUrl = value;
-              ruleName = key;
-              alias = undefined; // key is ruleName
-          } else {
-              repoUrl = value.url;
-              ruleName = value.rule || key;
-              alias = key; // key is alias
-          }
-
-          console.log(chalk.blue(`Installing rule "${ruleName}" (as "${key}") from ${repoUrl}...`))
-
-        // Find local repo config for this URL
-        let repoConfig: RepoConfig | undefined
-
-        for (const key in repos) {
-          if (repos[key].url === repoUrl) {
-            repoConfig = repos[key]
-            break
-          }
-        }
-
-        if (!repoConfig) {
-          console.log(chalk.yellow(`Repository for ${ruleName} not found locally. Configuring...`))
-
-          let name = path.basename(repoUrl, '.git')
-          if (!name) name = `repo-${Date.now()}`
-
-          if (repos[name]) {
-            name = `${name}-${Date.now()}`
-          }
-
-          const repoDir = path.join(getReposBaseDir(), name)
-          repoConfig = {
-            name,
-            url: repoUrl,
-            path: repoDir,
-          }
-
-          await setConfig({
-            repos: { ...repos, [name]: repoConfig },
-          })
-
-          await cloneOrUpdateRepo(repoConfig)
-        } else {
-          if (!(await fs.pathExists(repoConfig.path))) {
-            await cloneOrUpdateRepo(repoConfig)
-          }
-        }
-
-        // Determine if this rule came from local config
-        // Since we read combined config, we don't know easily without checking local file separately or changing getCombinedProjectConfig
-        // BUT, getCombinedProjectConfig merges.
-        // If we want strict privacy, crs install might be tricky if mixed.
-        // Simple solution: check if key exists in local config file.
-        const localConfig = await getProjectConfig(projectPath).then(async () => {
-             // We need to read raw local file
-             const localPath = path.join(projectPath, 'cursor-rules.local.json');
-             if (await fs.pathExists(localPath)) {
-                 return await fs.readJson(localPath);
-             }
-             return { rules: {} };
-        });
-
-        // Check if rule is in local config rules
-        // Note: localConfig structure matches ProjectConfig interface
-        let isLocal = false;
-        if (localConfig.rules) {
-            // Check if 'key' (the alias/name used in rules object) exists in local rules
-            if (Object.prototype.hasOwnProperty.call(localConfig.rules, key)) {
-                isLocal = true;
-            }
-        }
-
-        await linkRule(projectPath, ruleName, repoConfig, alias, isLocal)
-      }
-      console.log(chalk.green('All rules installed successfully.'))
+      const projectPath = process.cwd()
+      await installCursorRules(projectPath)
+      await installCursorPlans(projectPath)
     } catch (error: any) {
-      console.error(chalk.red('Error installing rules:'), error.message)
+      console.error(chalk.red('Error installing Cursor rules:'), error.message)
+      process.exit(1)
+    }
+  })
+
+// ============ Cursor rules subcommand (explicit) ============
+const cursorRules = cursor
+  .command('rules')
+  .description('Manage Cursor rules explicitly')
+
+cursorRules
+  .command('add')
+  .description('Sync Cursor rules to project (.cursor/rules/...)')
+  .argument('<ruleName>', 'Name of the rule directory in the rules repo')
+  .argument('[alias]', 'Alias for the rule name')
+  .option('-l, --local', 'Add to ai-rules-sync.local.json (private rule)')
+  .action(async (ruleName, alias, options) => {
+    try {
+      const opts = program.opts();
+      const currentRepo = await getTargetRepo(opts);
+      const projectPath = process.cwd();
+
+      console.log(chalk.gray(`Using repository: ${chalk.cyan(currentRepo.name)} (${currentRepo.url})`))
+
+      const isLocal = options.local;
+      await linkRule(projectPath, ruleName, currentRepo, alias, isLocal)
+
+      const { migrated } = await addCursorDependency(projectPath, ruleName, currentRepo.url, alias, isLocal)
+
+      const configFileName = isLocal ? 'ai-rules-sync.local.json' : 'ai-rules-sync.json';
+      console.log(chalk.green(`Updated ${configFileName} dependency.`))
+
+      if (migrated) {
+        console.log(chalk.yellow('Detected legacy "cursor-rules*.json". Migrated to "ai-rules-sync*.json". Consider deleting the legacy files to avoid ambiguity.'))
+      }
+
+      if (isLocal) {
+          const gitignorePath = path.join(projectPath, '.gitignore');
+        const added = await addIgnoreEntry(gitignorePath, 'ai-rules-sync.local.json', '# Local AI Rules Sync Config');
+          if (added) {
+          console.log(chalk.green(`Added "ai-rules-sync.local.json" to .gitignore.`));
+          }
+      }
+    } catch (error: any) {
+      console.error(chalk.red('Error adding rule:'), error.message)
+      process.exit(1)
+    }
+  })
+
+cursorRules
+  .command('remove')
+  .description('Remove a Cursor rule from project')
+  .argument('<alias>', 'Alias (or name) of the rule to remove')
+  .action(async (alias) => {
+    try {
+      const projectPath = process.cwd();
+
+      await unlinkRule(projectPath, alias);
+
+      const { removedFrom, migrated } = await removeCursorDependency(projectPath, alias);
+
+      if (removedFrom.length > 0) {
+        console.log(chalk.green(`Removed rule "${alias}" from configuration: ${removedFrom.join(', ')}`));
+      } else {
+        console.log(chalk.yellow(`Rule "${alias}" was not found in any configuration file.`));
+      }
+
+      if (migrated) {
+        console.log(chalk.yellow('Detected legacy "cursor-rules*.json". Migrated to "ai-rules-sync*.json". Consider deleting the legacy files to avoid ambiguity.'))
+      }
+    } catch (error: any) {
+      console.error(chalk.red('Error removing rule:'), error.message)
+      process.exit(1)
+    }
+  })
+
+cursorRules
+  .command('install')
+  .description('Install all Cursor rules from ai-rules-sync.json')
+  .action(async () => {
+    try {
+      await installCursorRules(process.cwd())
+    } catch (error: any) {
+      console.error(chalk.red('Error installing Cursor rules:'), error.message)
+      process.exit(1)
+    }
+  })
+
+// ============ Cursor plans subcommand ============
+const cursorPlans = cursor
+  .command('plans')
+  .description('Manage Cursor plans (.cursor/plans/)')
+
+cursorPlans
+  .command('add')
+  .description('Sync Cursor plan to project (.cursor/plans/...)')
+  .argument('<planName>', 'Name of the plan file in the rules repo (under plans/)')
+  .argument('[alias]', 'Alias for the plan name')
+  .option('-l, --local', 'Add to ai-rules-sync.local.json (private plan)')
+  .action(async (planName, alias, options) => {
+    try {
+      const opts = program.opts();
+      const currentRepo = await getTargetRepo(opts);
+      const projectPath = process.cwd();
+
+      console.log(chalk.gray(`Using repository: ${chalk.cyan(currentRepo.name)} (${currentRepo.url})`))
+
+      const isLocal = options.local;
+      const { sourceName, targetName } = await linkPlan(projectPath, planName, currentRepo, alias, isLocal)
+
+      const depAlias = targetName === sourceName ? undefined : targetName
+      const { migrated } = await addPlanDependency(projectPath, sourceName, currentRepo.url, depAlias, isLocal)
+
+      const configFileName = isLocal ? 'ai-rules-sync.local.json' : 'ai-rules-sync.json';
+      console.log(chalk.green(`Updated ${configFileName} plans dependency.`))
+
+      if (migrated) {
+        console.log(chalk.yellow('Detected legacy "cursor-rules*.json". Migrated to "ai-rules-sync*.json". Consider deleting the legacy files to avoid ambiguity.'))
+      }
+
+      if (isLocal) {
+        const gitignorePath = path.join(projectPath, '.gitignore');
+        const added = await addIgnoreEntry(gitignorePath, 'ai-rules-sync.local.json', '# Local AI Rules Sync Config');
+        if (added) {
+          console.log(chalk.green(`Added "ai-rules-sync.local.json" to .gitignore.`));
+        }
+      }
+    } catch (error: any) {
+      console.error(chalk.red('Error adding plan:'), error.message)
+      process.exit(1)
+    }
+  })
+
+cursorPlans
+  .command('remove')
+  .description('Remove a Cursor plan from project')
+  .argument('<alias>', 'Alias (or name) of the plan to remove')
+  .action(async (alias) => {
+    try {
+      const projectPath = process.cwd();
+      const cfg = await getCombinedProjectConfig(projectPath);
+      const resolved = resolvePlanAliasFromConfig(alias, Object.keys(cfg.cursor?.plans || {}));
+
+      await unlinkPlan(projectPath, resolved);
+
+      const { removedFrom, migrated } = await removePlanDependency(projectPath, resolved);
+
+      if (removedFrom.length > 0) {
+        console.log(chalk.green(`Removed plan "${resolved}" from configuration: ${removedFrom.join(', ')}`));
+      } else {
+        console.log(chalk.yellow(`Plan "${resolved}" was not found in any configuration file.`));
+      }
+
+      if (migrated) {
+        console.log(chalk.yellow('Detected legacy "cursor-rules*.json". Migrated to "ai-rules-sync*.json". Consider deleting the legacy files to avoid ambiguity.'))
+      }
+    } catch (error: any) {
+      console.error(chalk.red('Error removing plan:'), error.message)
+      process.exit(1)
+    }
+  })
+
+cursorPlans
+  .command('install')
+  .description('Install all Cursor plans from ai-rules-sync.json')
+  .action(async () => {
+    try {
+      await installCursorPlans(process.cwd())
+    } catch (error: any) {
+      console.error(chalk.red('Error installing Cursor plans:'), error.message)
+      process.exit(1)
+    }
+  })
+
+// ============ Copilot command group ============
+const copilot = program
+  .command('copilot')
+  .description('Manage Copilot instructions in a project (.github/instructions/...)')
+
+copilot
+  .command('add')
+  .description('Sync Copilot instruction entry to project (.github/instructions/...)')
+  .argument('<ruleName>', 'Name of the instruction directory in the rules repo (default: rules/<ruleName>)')
+  .argument('[alias]', 'Alias for the instruction name')
+  .option('-l, --local', 'Add to ai-rules-sync.local.json (private instruction)')
+  .action(async (ruleName, alias, options) => {
+    try {
+      const opts = program.opts();
+      const currentRepo = await getTargetRepo(opts);
+        const projectPath = process.cwd();
+
+      console.log(chalk.gray(`Using repository: ${chalk.cyan(currentRepo.name)} (${currentRepo.url})`))
+
+      const isLocal = options.local;
+      const { sourceName, targetName } = await linkCopilotInstruction(projectPath, ruleName, currentRepo, alias, isLocal)
+
+      const depAlias = targetName === sourceName ? undefined : targetName
+      const { migrated } = await addCopilotDependency(projectPath, sourceName, currentRepo.url, depAlias, isLocal)
+
+      const configFileName = isLocal ? 'ai-rules-sync.local.json' : 'ai-rules-sync.json';
+      console.log(chalk.green(`Updated ${configFileName} Copilot dependency.`))
+
+      if (migrated) {
+        console.log(chalk.yellow('Detected legacy "cursor-rules*.json". Migrated to "ai-rules-sync*.json". Consider deleting the legacy files to avoid ambiguity.'))
+      }
+
+      if (isLocal) {
+        const gitignorePath = path.join(projectPath, '.gitignore');
+        const added = await addIgnoreEntry(gitignorePath, 'ai-rules-sync.local.json', '# Local AI Rules Sync Config');
+        if (added) {
+          console.log(chalk.green(`Added "ai-rules-sync.local.json" to .gitignore.`));
+        }
+      }
+    } catch (error: any) {
+      console.error(chalk.red('Error adding Copilot instruction:'), error.message)
+      process.exit(1)
+    }
+  })
+
+copilot
+  .command('remove')
+  .description('Remove a Copilot instruction entry from project')
+  .argument('<alias>', 'Alias (or name) of the instruction to remove')
+  .action(async (alias) => {
+    try {
+      const projectPath = process.cwd();
+      const cfg = await getCombinedProjectConfig(projectPath);
+      const resolved = resolveCopilotAliasFromConfig(alias, Object.keys(cfg.copilot?.instructions || {}));
+
+      await unlinkCopilotInstruction(projectPath, resolved);
+
+      const { removedFrom, migrated } = await removeCopilotDependency(projectPath, resolved);
+
+      if (removedFrom.length > 0) {
+        console.log(chalk.green(`Removed instruction "${resolved}" from configuration: ${removedFrom.join(', ')}`));
+        } else {
+        console.log(chalk.yellow(`Instruction "${resolved}" was not found in any configuration file.`));
+      }
+
+      if (migrated) {
+        console.log(chalk.yellow('Detected legacy "cursor-rules*.json". Migrated to "ai-rules-sync*.json". Consider deleting the legacy files to avoid ambiguity.'))
+      }
+    } catch (error: any) {
+      console.error(chalk.red('Error removing Copilot instruction:'), error.message)
+      process.exit(1)
+    }
+  })
+
+copilot
+  .command('install')
+  .description('Install all Copilot instruction entries from ai-rules-sync.json')
+  .action(async () => {
+    try {
+      await installCopilotInstructions(process.cwd())
+    } catch (error: any) {
+      console.error(chalk.red('Error installing Copilot instructions:'), error.message)
       process.exit(1)
     }
   })
@@ -356,25 +897,8 @@ program
   .argument('[args...]', 'Git arguments')
   .allowUnknownOption()
   .action(async (args, commandObj) => {
-    // args will contain everything after 'git' that isn't a known global option
-    // IF we use .argument('[args...]').
-
-    // However, with allowUnknownOption, commander behavior is subtle.
-    // If we define arguments, commander tries to parse them.
-
-    // Let's rely on manual parsing from process.argv to be safe and consistent with previous logic,
-    // but we need to update the command definition to NOT enforce single arg.
-
-    // Actually, simply removing .argument() or changing to [args...] should fix the validation error.
-
-    // The previous implementation manually sliced process.argv.
-    // Let's keep that manual slicing logic as it handles the "global option after subcommand" case reasonably well
-    // provided we fix the validation error.
-
     const procArgs = process.argv
     const gitIndex = procArgs.indexOf('git')
-
-    // ... (rest of logic)
 
     const opts = program.opts();
     let gitArgs = procArgs.slice(gitIndex + 1)
@@ -397,4 +921,316 @@ program
     }
   })
 
-program.parse()
+// Hidden command for shell tab completion
+program
+  .command('_complete')
+  .argument('<type>', 'cursor, copilot, or plans')
+  .description(false as any) // Hide from help
+  .action(async (type: string) => {
+    try {
+      const opts = program.opts();
+      const currentRepo = await getTargetRepo(opts).catch(() => null);
+      if (!currentRepo) {
+        process.exit(0);
+      }
+
+      const repoConfig = await getProjectConfig(currentRepo.path);
+
+      // Determine which directory to list based on type
+      let rootPath: string;
+      if (type === 'plans') {
+        rootPath = 'plans'; // plans have their own directory
+      } else {
+        rootPath = repoConfig.rootPath || 'rules';
+      }
+
+      const rulesDir = path.join(currentRepo.path, rootPath);
+
+      if (!await fs.pathExists(rulesDir)) {
+        process.exit(0);
+      }
+
+      const entries = await fs.readdir(rulesDir);
+      const names = new Set<string>();
+
+      for (const entry of entries) {
+        // Strip known suffixes for display
+        let name = entry;
+        if (name.endsWith('.instructions.md')) {
+          name = name.slice(0, -'.instructions.md'.length);
+        } else if (name.endsWith('.md')) {
+          name = name.slice(0, -'.md'.length);
+        }
+        names.add(name);
+      }
+
+      // Output one name per line for shell completion
+      for (const name of names) {
+        console.log(name);
+      }
+    } catch {
+      process.exit(0);
+    }
+  })
+
+// Completion command group
+const completionCmd = program
+  .command('completion')
+  .description('Shell completion utilities')
+
+// Default: output completion script
+completionCmd
+  .command('script', { isDefault: true })
+  .argument('[shell]', 'Shell type: bash, zsh, or fish (auto-detect if omitted)')
+  .description('Output shell completion script')
+  .action((shell?: string) => {
+    // Auto-detect shell if not provided
+    if (!shell) {
+      const envShell = process.env.SHELL || '';
+      if (envShell.includes('zsh')) {
+        shell = 'zsh';
+      } else if (envShell.includes('fish')) {
+        shell = 'fish';
+      } else {
+        shell = 'bash';
+      }
+    }
+
+    const bashScript = `
+# ais bash completion
+_ais_complete() {
+  local cur="\${COMP_WORDS[COMP_CWORD]}"
+  local prev="\${COMP_WORDS[COMP_CWORD-1]}"
+  local pprev="\${COMP_WORDS[COMP_CWORD-2]}"
+  local ppprev="\${COMP_WORDS[COMP_CWORD-3]}"
+
+  # cursor plans add
+  if [[ "\$ppprev" == "cursor" && "\$pprev" == "plans" && "\$prev" == "add" ]]; then
+    COMPREPLY=( $(compgen -W "$(ais _complete plans 2>/dev/null)" -- "\$cur") )
+    return 0
+  fi
+
+  # cursor add / copilot add
+  if [[ "\$pprev" == "cursor" && "\$prev" == "add" ]] || [[ "\$pprev" == "copilot" && "\$prev" == "add" ]]; then
+    COMPREPLY=( $(compgen -W "$(ais _complete cursor 2>/dev/null)" -- "\$cur") )
+    return 0
+  fi
+
+  # cursor rules add
+  if [[ "\$pprev" == "rules" && "\$prev" == "add" ]]; then
+    COMPREPLY=( $(compgen -W "$(ais _complete cursor 2>/dev/null)" -- "\$cur") )
+    return 0
+  fi
+
+  # cursor plans
+  if [[ "\$pprev" == "cursor" && "\$prev" == "plans" ]]; then
+    COMPREPLY=( $(compgen -W "add remove install" -- "\$cur") )
+    return 0
+  fi
+
+  # cursor rules
+  if [[ "\$pprev" == "cursor" && "\$prev" == "rules" ]]; then
+    COMPREPLY=( $(compgen -W "add remove install" -- "\$cur") )
+    return 0
+  fi
+
+  if [[ "\$prev" == "cursor" ]]; then
+    COMPREPLY=( $(compgen -W "add remove install rules plans" -- "\$cur") )
+    return 0
+  fi
+
+  if [[ "\$prev" == "copilot" ]]; then
+    COMPREPLY=( $(compgen -W "add remove install" -- "\$cur") )
+    return 0
+  fi
+
+  if [[ "\$prev" == "ais" ]]; then
+    COMPREPLY=( $(compgen -W "cursor copilot use list git add remove install completion" -- "\$cur") )
+    return 0
+  fi
+}
+complete -F _ais_complete ais
+`;
+
+    const zshScript = `
+# ais zsh completion
+_ais() {
+  local -a subcmds
+  subcmds=(
+    'cursor:Manage Cursor rules and plans'
+    'copilot:Manage Copilot instructions'
+    'use:Configure rules repository'
+    'list:List configured repositories'
+    'git:Run git commands in rules repository'
+    'add:Add a rule (smart dispatch)'
+    'remove:Remove a rule (smart dispatch)'
+    'install:Install all rules (smart dispatch)'
+    'completion:Output shell completion script'
+  )
+
+  local -a cursor_subcmds copilot_subcmds cursor_rules_subcmds cursor_plans_subcmds
+  cursor_subcmds=('add:Add a Cursor rule' 'remove:Remove a Cursor rule' 'install:Install all Cursor entries' 'rules:Manage rules explicitly' 'plans:Manage plans')
+  copilot_subcmds=('add:Add a Copilot instruction' 'remove:Remove a Copilot instruction' 'install:Install all Copilot instructions')
+  cursor_rules_subcmds=('add:Add a Cursor rule' 'remove:Remove a Cursor rule' 'install:Install all Cursor rules')
+  cursor_plans_subcmds=('add:Add a Cursor plan' 'remove:Remove a Cursor plan' 'install:Install all Cursor plans')
+
+  _arguments -C \\
+    '1:command:->command' \\
+    '2:subcommand:->subcommand' \\
+    '3:subsubcommand:->subsubcommand' \\
+    '4:name:->name' \\
+    '*::arg:->args'
+
+  case "\$state" in
+    command)
+      _describe 'command' subcmds
+      ;;
+    subcommand)
+      case "\$words[2]" in
+        cursor)
+          _describe 'subcommand' cursor_subcmds
+          ;;
+        copilot)
+          _describe 'subcommand' copilot_subcmds
+          ;;
+      esac
+      ;;
+    subsubcommand)
+      case "\$words[2]" in
+        cursor)
+          case "\$words[3]" in
+            add)
+              local -a rules
+              rules=(\${(f)"\$(ais _complete cursor 2>/dev/null)"})
+              if (( \$#rules )); then
+                compadd "\$rules[@]"
+              fi
+              ;;
+            rules)
+              _describe 'subsubcommand' cursor_rules_subcmds
+              ;;
+            plans)
+              _describe 'subsubcommand' cursor_plans_subcmds
+              ;;
+            *)
+              _describe 'subsubcommand' cursor_subcmds
+              ;;
+          esac
+          ;;
+        copilot)
+          case "\$words[3]" in
+            add)
+              local -a instructions
+              instructions=(\${(f)"\$(ais _complete copilot 2>/dev/null)"})
+              if (( \$#instructions )); then
+                compadd "\$instructions[@]"
+              fi
+              ;;
+            *)
+              _describe 'subsubcommand' copilot_subcmds
+              ;;
+          esac
+          ;;
+      esac
+      ;;
+    name)
+      # Handle completion for specific names (like aliases)
+      ;;
+    args)
+      # Handle additional arguments
+      ;;
+  esac
+}
+
+# Only define completion if compdef is available (zsh completion initialized)
+command -v compdef >/dev/null 2>&1 && compdef _ais ais
+`;
+
+    const fishScript = `
+# ais fish completion
+complete -c ais -f
+
+# Top-level commands
+complete -c ais -n "__fish_use_subcommand" -a "cursor" -d "Manage Cursor rules and plans"
+complete -c ais -n "__fish_use_subcommand" -a "copilot" -d "Manage Copilot instructions"
+complete -c ais -n "__fish_use_subcommand" -a "use" -d "Configure rules repository"
+complete -c ais -n "__fish_use_subcommand" -a "list" -d "List configured repositories"
+complete -c ais -n "__fish_use_subcommand" -a "git" -d "Run git commands in rules repository"
+complete -c ais -n "__fish_use_subcommand" -a "add" -d "Add a rule (smart dispatch)"
+complete -c ais -n "__fish_use_subcommand" -a "remove" -d "Remove a rule (smart dispatch)"
+complete -c ais -n "__fish_use_subcommand" -a "install" -d "Install all rules (smart dispatch)"
+complete -c ais -n "__fish_use_subcommand" -a "completion" -d "Output shell completion script"
+
+# cursor subcommands
+complete -c ais -n "__fish_seen_subcommand_from cursor; and not __fish_seen_subcommand_from add remove install rules plans" -a "add" -d "Add a Cursor rule"
+complete -c ais -n "__fish_seen_subcommand_from cursor; and not __fish_seen_subcommand_from add remove install rules plans" -a "remove" -d "Remove a Cursor rule"
+complete -c ais -n "__fish_seen_subcommand_from cursor; and not __fish_seen_subcommand_from add remove install rules plans" -a "install" -d "Install all Cursor entries"
+complete -c ais -n "__fish_seen_subcommand_from cursor; and not __fish_seen_subcommand_from add remove install rules plans" -a "rules" -d "Manage rules explicitly"
+complete -c ais -n "__fish_seen_subcommand_from cursor; and not __fish_seen_subcommand_from add remove install rules plans" -a "plans" -d "Manage plans"
+
+# cursor rules subcommands
+complete -c ais -n "__fish_seen_subcommand_from cursor; and __fish_seen_subcommand_from rules; and not __fish_seen_subcommand_from add remove install" -a "add" -d "Add a Cursor rule"
+complete -c ais -n "__fish_seen_subcommand_from cursor; and __fish_seen_subcommand_from rules; and not __fish_seen_subcommand_from add remove install" -a "remove" -d "Remove a Cursor rule"
+complete -c ais -n "__fish_seen_subcommand_from cursor; and __fish_seen_subcommand_from rules; and not __fish_seen_subcommand_from add remove install" -a "install" -d "Install all Cursor rules"
+
+# cursor plans subcommands
+complete -c ais -n "__fish_seen_subcommand_from cursor; and __fish_seen_subcommand_from plans; and not __fish_seen_subcommand_from add remove install" -a "add" -d "Add a Cursor plan"
+complete -c ais -n "__fish_seen_subcommand_from cursor; and __fish_seen_subcommand_from plans; and not __fish_seen_subcommand_from add remove install" -a "remove" -d "Remove a Cursor plan"
+complete -c ais -n "__fish_seen_subcommand_from cursor; and __fish_seen_subcommand_from plans; and not __fish_seen_subcommand_from add remove install" -a "install" -d "Install all Cursor plans"
+
+# copilot subcommands
+complete -c ais -n "__fish_seen_subcommand_from copilot; and not __fish_seen_subcommand_from add remove install" -a "add" -d "Add a Copilot instruction"
+complete -c ais -n "__fish_seen_subcommand_from copilot; and not __fish_seen_subcommand_from add remove install" -a "remove" -d "Remove a Copilot instruction"
+complete -c ais -n "__fish_seen_subcommand_from copilot; and not __fish_seen_subcommand_from add remove install" -a "install" -d "Install all Copilot instructions"
+
+# Rule name completion for cursor add / copilot add
+complete -c ais -n "__fish_seen_subcommand_from cursor; and __fish_seen_subcommand_from add" -a "(ais _complete cursor 2>/dev/null)"
+complete -c ais -n "__fish_seen_subcommand_from cursor; and __fish_seen_subcommand_from rules; and __fish_seen_subcommand_from add" -a "(ais _complete cursor 2>/dev/null)"
+complete -c ais -n "__fish_seen_subcommand_from cursor; and __fish_seen_subcommand_from plans; and __fish_seen_subcommand_from add" -a "(ais _complete plans 2>/dev/null)"
+complete -c ais -n "__fish_seen_subcommand_from copilot; and __fish_seen_subcommand_from add" -a "(ais _complete copilot 2>/dev/null)"
+`;
+
+    switch (shell) {
+      case 'bash':
+        console.log(bashScript.trim());
+        break;
+      case 'zsh':
+        console.log(zshScript.trim());
+        break;
+      case 'fish':
+        console.log(fishScript.trim());
+        break;
+      default:
+        console.error(`Unknown shell: ${shell}. Supported: bash, zsh, fish`);
+        process.exit(1);
+    }
+  })
+
+// Install completion to shell config file
+completionCmd
+  .command('install')
+  .description('Install shell completion to your shell config file')
+  .option('-f, --force', 'Force reinstall even if already installed')
+  .action(async (options) => {
+    try {
+      await forceInstallCompletion(options.force);
+    } catch (error: any) {
+      console.error(chalk.red('Error installing completion:'), error.message);
+      process.exit(1);
+    }
+  });
+
+// Check for first-run completion prompt before parsing
+async function main() {
+  // Only prompt if not running completion commands (to avoid interference)
+  const args = process.argv.slice(2);
+  const isCompletionCommand = args[0] === 'completion' || args[0] === '_complete';
+
+  if (!isCompletionCommand) {
+    await checkAndPromptCompletion();
+  }
+
+  program.parse();
+}
+
+main()
