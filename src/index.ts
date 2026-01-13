@@ -8,8 +8,9 @@ import { cloneOrUpdateRepo, runGitCommand } from './git.js'
 import { linkCopilotInstruction, linkRule, unlinkCopilotInstruction, unlinkRule, linkCursorCommand, unlinkCursorCommand, linkCursorSkill, unlinkCursorSkill, linkClaudeSkill, unlinkClaudeSkill, linkClaudeAgent, unlinkClaudeAgent } from './link.js'
 import { addIgnoreEntry } from './utils.js'
 import { addCopilotDependency, addCursorDependency, removeCopilotDependency, removeCursorDependency, getCombinedProjectConfig, getConfigSource, getRepoSourceConfig, getSourceDir, addCursorCommandDependency, removeCursorCommandDependency, addCursorSkillDependency, removeCursorSkillDependency, addClaudeSkillDependency, removeClaudeSkillDependency, addClaudeAgentDependency, removeClaudeAgentDependency } from './project-config.js'
-import { stripCopilotSuffix } from './adapters/index.js'
+import { stripCopilotSuffix, adapterRegistry, getAdapter } from './adapters/index.js'
 import { checkAndPromptCompletion, forceInstallCompletion } from './completion.js'
+import { importEntry } from './sync-engine.js'
 
 const program = new Command()
 
@@ -828,6 +829,68 @@ program
     }
   })
 
+program
+  .command('import <name>')
+  .description('Import an existing file/directory to rules repository (auto-detects tool)')
+  .option('-l, --local', 'Add to ai-rules-sync.local.json (private)')
+  .option('-m, --message <message>', 'Custom git commit message')
+  .option('-f, --force', 'Overwrite if entry already exists in repository')
+  .option('-p, --push', 'Push to remote repository after commit')
+  .action(async (name, options) => {
+    try {
+      const projectPath = process.cwd();
+      const opts = program.opts();
+      const currentRepo = await getTargetRepo(opts);
+
+      // Try to find the entry in project directories
+      let foundAdapter = null;
+      const allAdapters = adapterRegistry.all();
+
+      for (const adapter of allAdapters) {
+        const targetPath = path.join(projectPath, adapter.targetDir, name);
+        if (await fs.pathExists(targetPath)) {
+          foundAdapter = adapter;
+          break;
+        }
+      }
+
+      if (!foundAdapter) {
+        throw new Error(`Entry "${name}" not found in any known location. Try specifying the tool explicitly: ais import cursor ${name}`);
+      }
+
+      console.log(chalk.gray(`Detected ${foundAdapter.tool} ${foundAdapter.subtype}: ${name}`));
+      console.log(chalk.gray(`Using repository: ${chalk.cyan(currentRepo.name)} (${currentRepo.url})`));
+
+      await importEntry(foundAdapter, {
+        projectPath,
+        name,
+        repo: currentRepo,
+        isLocal: options.local,
+        commitMessage: options.message,
+        force: options.force,
+        push: options.push
+      });
+
+      // Add to config
+      await foundAdapter.addDependency(projectPath, name, currentRepo.url, undefined, options.local);
+      const configFileName = options.local ? 'ai-rules-sync.local.json' : 'ai-rules-sync.json';
+      console.log(chalk.green(`Updated ${configFileName} dependency.`));
+
+      if (options.local) {
+        const gitignorePath = path.join(projectPath, '.gitignore');
+        const added = await addIgnoreEntry(gitignorePath, 'ai-rules-sync.local.json', '# Local AI Rules Sync Config');
+        if (added) {
+          console.log(chalk.green(`Added "ai-rules-sync.local.json" to .gitignore.`));
+        }
+      }
+
+      console.log(chalk.bold.green(`\n✓ Successfully imported "${name}"!`));
+    } catch (error: any) {
+      console.error(chalk.red('Error importing entry:'), error.message);
+      process.exit(1);
+    }
+  })
+
 // ============ Cursor command group ============
 const cursor = program
   .command('cursor')
@@ -915,6 +978,67 @@ cursor
     }
   })
 
+cursor
+  .command('import <name>')
+  .description('Import Cursor rule/command/skill from project to repository (auto-detects subtype)')
+  .option('-l, --local', 'Add to ai-rules-sync.local.json (private)')
+  .option('-m, --message <message>', 'Custom git commit message')
+  .option('-f, --force', 'Overwrite if entry already exists in repository')
+  .option('-p, --push', 'Push to remote repository after commit')
+  .action(async (name, options) => {
+    try {
+      const projectPath = process.cwd();
+      const opts = program.opts();
+      const currentRepo = await getTargetRepo(opts);
+
+      // Try to detect subtype by checking which directory it's in
+      const cursorAdapters = adapterRegistry.getForTool('cursor');
+      let foundAdapter = null;
+
+      for (const adapter of cursorAdapters) {
+        const targetPath = path.join(projectPath, adapter.targetDir, name);
+        if (await fs.pathExists(targetPath)) {
+          foundAdapter = adapter;
+          break;
+        }
+      }
+
+      if (!foundAdapter) {
+        throw new Error(`Entry "${name}" not found in .cursor/rules, .cursor/commands, or .cursor/skills. Use explicit command: ais cursor rules import ${name}`);
+      }
+
+      console.log(chalk.gray(`Detected ${foundAdapter.subtype}: ${name}`));
+      console.log(chalk.gray(`Using repository: ${chalk.cyan(currentRepo.name)} (${currentRepo.url})`));
+
+      await importEntry(foundAdapter, {
+        projectPath,
+        name,
+        repo: currentRepo,
+        isLocal: options.local,
+        commitMessage: options.message,
+        force: options.force,
+        push: options.push
+      });
+
+      await foundAdapter.addDependency(projectPath, name, currentRepo.url, undefined, options.local);
+      const configFileName = options.local ? 'ai-rules-sync.local.json' : 'ai-rules-sync.json';
+      console.log(chalk.green(`Updated ${configFileName} dependency.`));
+
+      if (options.local) {
+        const gitignorePath = path.join(projectPath, '.gitignore');
+        const added = await addIgnoreEntry(gitignorePath, 'ai-rules-sync.local.json', '# Local AI Rules Sync Config');
+        if (added) {
+          console.log(chalk.green(`Added "ai-rules-sync.local.json" to .gitignore.`));
+        }
+      }
+
+      console.log(chalk.bold.green(`\n✓ Successfully imported "${name}"!`));
+    } catch (error: any) {
+      console.error(chalk.red('Error importing entry:'), error.message);
+      process.exit(1);
+    }
+  })
+
 // ============ Cursor rules subcommand (explicit) ============
 const cursorRules = cursor
   .command('rules')
@@ -995,6 +1119,51 @@ cursorRules
     } catch (error: any) {
       console.error(chalk.red('Error installing Cursor rules:'), error.message)
       process.exit(1)
+    }
+  })
+
+cursorRules
+  .command('import <name>')
+  .description('Import Cursor rule from project to repository')
+  .option('-l, --local', 'Add to ai-rules-sync.local.json (private)')
+  .option('-m, --message <message>', 'Custom git commit message')
+  .option('-f, --force', 'Overwrite if entry already exists in repository')
+  .option('-p, --push', 'Push to remote repository after commit')
+  .action(async (name, options) => {
+    try {
+      const projectPath = process.cwd();
+      const opts = program.opts();
+      const currentRepo = await getTargetRepo(opts);
+
+      console.log(chalk.gray(`Using repository: ${chalk.cyan(currentRepo.name)} (${currentRepo.url})`));
+
+      const adapter = getAdapter('cursor', 'rules');
+      await importEntry(adapter, {
+        projectPath,
+        name,
+        repo: currentRepo,
+        isLocal: options.local,
+        commitMessage: options.message,
+        force: options.force,
+        push: options.push
+      });
+
+      await adapter.addDependency(projectPath, name, currentRepo.url, undefined, options.local);
+      const configFileName = options.local ? 'ai-rules-sync.local.json' : 'ai-rules-sync.json';
+      console.log(chalk.green(`Updated ${configFileName} dependency.`));
+
+      if (options.local) {
+        const gitignorePath = path.join(projectPath, '.gitignore');
+        const added = await addIgnoreEntry(gitignorePath, 'ai-rules-sync.local.json', '# Local AI Rules Sync Config');
+        if (added) {
+          console.log(chalk.green(`Added "ai-rules-sync.local.json" to .gitignore.`));
+        }
+      }
+
+      console.log(chalk.bold.green(`\n✓ Successfully imported "${name}"!`));
+    } catch (error: any) {
+      console.error(chalk.red('Error importing entry:'), error.message);
+      process.exit(1);
     }
   })
 
@@ -1084,6 +1253,51 @@ cursorCommands
     }
   })
 
+cursorCommands
+  .command('import <name>')
+  .description('Import Cursor command from project to repository')
+  .option('-l, --local', 'Add to ai-rules-sync.local.json (private)')
+  .option('-m, --message <message>', 'Custom git commit message')
+  .option('-f, --force', 'Overwrite if entry already exists in repository')
+  .option('-p, --push', 'Push to remote repository after commit')
+  .action(async (name, options) => {
+    try {
+      const projectPath = process.cwd();
+      const opts = program.opts();
+      const currentRepo = await getTargetRepo(opts);
+
+      console.log(chalk.gray(`Using repository: ${chalk.cyan(currentRepo.name)} (${currentRepo.url})`));
+
+      const adapter = getAdapter('cursor', 'commands');
+      await importEntry(adapter, {
+        projectPath,
+        name,
+        repo: currentRepo,
+        isLocal: options.local,
+        commitMessage: options.message,
+        force: options.force,
+        push: options.push
+      });
+
+      await adapter.addDependency(projectPath, name, currentRepo.url, undefined, options.local);
+      const configFileName = options.local ? 'ai-rules-sync.local.json' : 'ai-rules-sync.json';
+      console.log(chalk.green(`Updated ${configFileName} dependency.`));
+
+      if (options.local) {
+        const gitignorePath = path.join(projectPath, '.gitignore');
+        const added = await addIgnoreEntry(gitignorePath, 'ai-rules-sync.local.json', '# Local AI Rules Sync Config');
+        if (added) {
+          console.log(chalk.green(`Added "ai-rules-sync.local.json" to .gitignore.`));
+        }
+      }
+
+      console.log(chalk.bold.green(`\n✓ Successfully imported "${name}"!`));
+    } catch (error: any) {
+      console.error(chalk.red('Error importing entry:'), error.message);
+      process.exit(1);
+    }
+  })
+
 // ============ Cursor skills subcommand ============
 const cursorSkills = cursor
   .command('skills')
@@ -1164,6 +1378,51 @@ cursorSkills
     } catch (error: any) {
       console.error(chalk.red('Error installing Cursor skills:'), error.message)
       process.exit(1)
+    }
+  })
+
+cursorSkills
+  .command('import <name>')
+  .description('Import Cursor skill from project to repository')
+  .option('-l, --local', 'Add to ai-rules-sync.local.json (private)')
+  .option('-m, --message <message>', 'Custom git commit message')
+  .option('-f, --force', 'Overwrite if entry already exists in repository')
+  .option('-p, --push', 'Push to remote repository after commit')
+  .action(async (name, options) => {
+    try {
+      const projectPath = process.cwd();
+      const opts = program.opts();
+      const currentRepo = await getTargetRepo(opts);
+
+      console.log(chalk.gray(`Using repository: ${chalk.cyan(currentRepo.name)} (${currentRepo.url})`));
+
+      const adapter = getAdapter('cursor', 'skills');
+      await importEntry(adapter, {
+        projectPath,
+        name,
+        repo: currentRepo,
+        isLocal: options.local,
+        commitMessage: options.message,
+        force: options.force,
+        push: options.push
+      });
+
+      await adapter.addDependency(projectPath, name, currentRepo.url, undefined, options.local);
+      const configFileName = options.local ? 'ai-rules-sync.local.json' : 'ai-rules-sync.json';
+      console.log(chalk.green(`Updated ${configFileName} dependency.`));
+
+      if (options.local) {
+        const gitignorePath = path.join(projectPath, '.gitignore');
+        const added = await addIgnoreEntry(gitignorePath, 'ai-rules-sync.local.json', '# Local AI Rules Sync Config');
+        if (added) {
+          console.log(chalk.green(`Added "ai-rules-sync.local.json" to .gitignore.`));
+        }
+      }
+
+      console.log(chalk.bold.green(`\n✓ Successfully imported "${name}"!`));
+    } catch (error: any) {
+      console.error(chalk.red('Error importing entry:'), error.message);
+      process.exit(1);
     }
   })
 
@@ -1250,6 +1509,51 @@ copilot
     } catch (error: any) {
       console.error(chalk.red('Error installing Copilot instructions:'), error.message)
       process.exit(1)
+    }
+  })
+
+copilot
+  .command('import <name>')
+  .description('Import Copilot instruction from project to repository')
+  .option('-l, --local', 'Add to ai-rules-sync.local.json (private)')
+  .option('-m, --message <message>', 'Custom git commit message')
+  .option('-f, --force', 'Overwrite if entry already exists in repository')
+  .option('-p, --push', 'Push to remote repository after commit')
+  .action(async (name, options) => {
+    try {
+      const projectPath = process.cwd();
+      const opts = program.opts();
+      const currentRepo = await getTargetRepo(opts);
+
+      console.log(chalk.gray(`Using repository: ${chalk.cyan(currentRepo.name)} (${currentRepo.url})`));
+
+      const adapter = getAdapter('copilot', 'instructions');
+      await importEntry(adapter, {
+        projectPath,
+        name,
+        repo: currentRepo,
+        isLocal: options.local,
+        commitMessage: options.message,
+        force: options.force,
+        push: options.push
+      });
+
+      await adapter.addDependency(projectPath, name, currentRepo.url, undefined, options.local);
+      const configFileName = options.local ? 'ai-rules-sync.local.json' : 'ai-rules-sync.json';
+      console.log(chalk.green(`Updated ${configFileName} dependency.`));
+
+      if (options.local) {
+        const gitignorePath = path.join(projectPath, '.gitignore');
+        const added = await addIgnoreEntry(gitignorePath, 'ai-rules-sync.local.json', '# Local AI Rules Sync Config');
+        if (added) {
+          console.log(chalk.green(`Added "ai-rules-sync.local.json" to .gitignore.`));
+        }
+      }
+
+      console.log(chalk.bold.green(`\n✓ Successfully imported "${name}"!`));
+    } catch (error: any) {
+      console.error(chalk.red('Error importing entry:'), error.message);
+      process.exit(1);
     }
   })
 
@@ -1341,6 +1645,51 @@ claudeSkills
     }
   })
 
+claudeSkills
+  .command('import <name>')
+  .description('Import Claude skill from project to repository')
+  .option('-l, --local', 'Add to ai-rules-sync.local.json (private)')
+  .option('-m, --message <message>', 'Custom git commit message')
+  .option('-f, --force', 'Overwrite if entry already exists in repository')
+  .option('-p, --push', 'Push to remote repository after commit')
+  .action(async (name, options) => {
+    try {
+      const projectPath = process.cwd();
+      const opts = program.opts();
+      const currentRepo = await getTargetRepo(opts);
+
+      console.log(chalk.gray(`Using repository: ${chalk.cyan(currentRepo.name)} (${currentRepo.url})`));
+
+      const adapter = getAdapter('claude', 'skills');
+      await importEntry(adapter, {
+        projectPath,
+        name,
+        repo: currentRepo,
+        isLocal: options.local,
+        commitMessage: options.message,
+        force: options.force,
+        push: options.push
+      });
+
+      await adapter.addDependency(projectPath, name, currentRepo.url, undefined, options.local);
+      const configFileName = options.local ? 'ai-rules-sync.local.json' : 'ai-rules-sync.json';
+      console.log(chalk.green(`Updated ${configFileName} dependency.`));
+
+      if (options.local) {
+        const gitignorePath = path.join(projectPath, '.gitignore');
+        const added = await addIgnoreEntry(gitignorePath, 'ai-rules-sync.local.json', '# Local AI Rules Sync Config');
+        if (added) {
+          console.log(chalk.green(`Added "ai-rules-sync.local.json" to .gitignore.`));
+        }
+      }
+
+      console.log(chalk.bold.green(`\n✓ Successfully imported "${name}"!`));
+    } catch (error: any) {
+      console.error(chalk.red('Error importing entry:'), error.message);
+      process.exit(1);
+    }
+  })
+
 // ============ Claude agents subcommand ============
 const claudeAgents = claude
   .command('agents')
@@ -1424,6 +1773,50 @@ claudeAgents
     }
   })
 
+claudeAgents
+  .command('import <name>')
+  .description('Import Claude agent from project to repository')
+  .option('-l, --local', 'Add to ai-rules-sync.local.json (private)')
+  .option('-m, --message <message>', 'Custom git commit message')
+  .option('-f, --force', 'Overwrite if entry already exists in repository')
+  .option('-p, --push', 'Push to remote repository after commit')
+  .action(async (name, options) => {
+    try {
+      const projectPath = process.cwd();
+      const opts = program.opts();
+      const currentRepo = await getTargetRepo(opts);
+
+      console.log(chalk.gray(`Using repository: ${chalk.cyan(currentRepo.name)} (${currentRepo.url})`));
+
+      const adapter = getAdapter('claude', 'agents');
+      await importEntry(adapter, {
+        projectPath,
+        name,
+        repo: currentRepo,
+        isLocal: options.local,
+        commitMessage: options.message,
+        force: options.force,
+        push: options.push
+      });
+
+      await adapter.addDependency(projectPath, name, currentRepo.url, undefined, options.local);
+      const configFileName = options.local ? 'ai-rules-sync.local.json' : 'ai-rules-sync.json';
+      console.log(chalk.green(`Updated ${configFileName} dependency.`));
+
+      if (options.local) {
+        const gitignorePath = path.join(projectPath, '.gitignore');
+        const added = await addIgnoreEntry(gitignorePath, 'ai-rules-sync.local.json', '# Local AI Rules Sync Config');
+        if (added) {
+          console.log(chalk.green(`Added "ai-rules-sync.local.json" to .gitignore.`));
+        }
+      }
+
+      console.log(chalk.bold.green(`\n✓ Successfully imported "${name}"!`));
+    } catch (error: any) {
+      console.error(chalk.red('Error importing entry:'), error.message);
+      process.exit(1);
+    }
+  })
 
 // ============ Claude install shortcut ============
 claude

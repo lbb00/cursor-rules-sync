@@ -264,6 +264,67 @@ ais claude agents remove [alias]
 
 该命令会删除软链接、ignore 文件中的条目，并从 `ai-rules-sync.json`（或 `ai-rules-sync.local.json`）中移除依赖。
 
+### 导入条目到规则仓库
+
+`import` 命令允许你将项目中已有的规则/技能/命令导入到规则仓库中。当你在本地创建了规则并希望集中管理时，这个功能非常有用。
+
+**工作原理：**
+1. 将文件/目录从项目复制到规则仓库
+2. 在规则仓库中提交更改
+3. 删除项目中的原始文件/目录
+4. 创建软链接链回项目（就像 `add` 命令一样）
+
+**基本用法：**
+
+```bash
+# 自动检测工具和类型
+ais import my-custom-rule
+
+# 指定工具（自动检测 rules/commands/skills）
+ais cursor import my-custom-rule
+
+# 明确指定所有内容
+ais cursor rules import my-custom-rule
+ais cursor commands import format-code.md
+ais cursor skills import code-review
+ais copilot import test-guide
+ais claude skills import analyzer
+ais claude agents import debugger
+```
+
+**可用标志：**
+
+- `-l, --local`: 导入为私有规则（存储在 `ai-rules-sync.local.json`）
+- `-m, --message <msg>`: 自定义 git 提交消息
+- `-f, --force`: 强制覆盖仓库中的现有条目
+- `-p, --push`: 提交后自动推送到远程仓库
+
+**示例：**
+
+```bash
+# 使用自定义提交消息导入
+ais cursor rules import my-rule -m "添加自定义身份验证规则"
+
+# 导入为私有规则
+ais cursor rules import private-rule --local
+
+# 强制覆盖现有条目并推送到远程
+ais cursor rules import my-rule --force --push
+
+# 导入 Copilot 指令
+ais copilot import test-guide
+
+# 导入 Claude 技能
+ais claude skills import code-review
+```
+
+**错误处理：**
+
+- 如果项目中不存在该条目，会显示错误
+- 如果该条目已经是软链接（由 ais 管理），不会被导入
+- 如果仓库中已存在该条目且未使用 `--force`，导入会失败
+- 导入后，该条目将像其他同步的规则一样被管理
+
 ### ai-rules-sync.json 结构
 
 `ai-rules-sync.json` 文件用于分别记录 Cursor 规则、命令、技能、Copilot 指令和 Claude 技能/代理。它支持简单的字符串格式（仅 URL）和对象格式（包含 URL 和原名）。

@@ -123,10 +123,9 @@ describe('Completion Module', () => {
       expect(result).toContain(completionModule.COMPLETION_END_MARKER);
     });
 
-    it('should return file-based snippet for zsh with block markers', () => {
+    it('should return eval-style snippet for zsh with block markers', () => {
       const result = completionModule.getCompletionSnippet('zsh');
-      expect(result).toContain('ais completion > ~/.zsh/ais_completion.zsh');
-      expect(result).toContain('source ~/.zsh/ais_completion.zsh');
+      expect(result).toContain('eval "$(ais completion zsh)"');
       expect(result).toContain(completionModule.COMPLETION_START_MARKER);
       expect(result).toContain(completionModule.COMPLETION_END_MARKER);
     });

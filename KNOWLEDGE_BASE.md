@@ -180,7 +180,38 @@ This eliminates the need for separate functions like `addCursorDependency`, `add
 - `ais claude install` - Install all Claude skills and agents.
 - `ais install` - Install everything.
 
-### 9. Configuration Files
+### 9. Import Entries to Rules Repository
+- **Purpose**: Reverse operation of `add` - imports existing local files/directories into the rules repository
+- **Syntax**:
+  - `ais import <name>` - Auto-detect tool and type
+  - `ais cursor import <name>` - Auto-detect subtype (rules/commands/skills)
+  - `ais cursor rules import <name>` - Explicit import of Cursor rule
+  - `ais cursor commands import <name>` - Explicit import of Cursor command
+  - `ais cursor skills import <name>` - Explicit import of Cursor skill
+  - `ais copilot import <name>` - Import Copilot instruction
+  - `ais claude skills import <name>` - Import Claude skill
+  - `ais claude agents import <name>` - Import Claude agent
+- **Options**:
+  - `--local` (`-l`) - Import as private rule (stores in `ai-rules-sync.local.json`)
+  - `--message <msg>` (`-m`) - Custom git commit message
+  - `--force` (`-f`) - Overwrite if entry already exists in repository
+  - `--push` (`-p`) - Automatically push to remote repository after commit
+- **Workflow**:
+  1. Verifies file/directory exists in project and is not already a symlink
+  2. Copies to rules repository
+  3. Git commits the changes (with optional custom message)
+  4. Optionally pushes to remote (with `--push` flag)
+  5. Deletes original from project
+  6. Creates symlink back to project (using existing `linkEntry` logic)
+  7. Adds to `ai-rules-sync.json` (or `.local.json` with `--local`)
+- **Implementation**: Uses `importEntry()` function in `src/sync-engine.ts` with `ImportOptions` interface extending `SyncOptions`
+- **Error Handling**:
+  - Entry not found in project → Error
+  - Entry is already a symlink → Error (already managed)
+  - Entry exists in repository without `--force` → Error
+  - After import, entry is managed like any other synced rule
+
+### 10. Configuration Files
 
 **Rules Repository Config** (`ai-rules-sync.json` in the rules repo):
 ```json
