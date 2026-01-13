@@ -1,12 +1,12 @@
 # Project Knowledge Base
 
 ## Project Overview
-**AI Rules Sync (ais)** is a CLI tool designed to synchronize agent rules from a centralized Git repository to local projects using symbolic links. It supports **Cursor rules**, **Cursor commands**, **Copilot instructions**, and **Claude Code skills/agents/plugins**, keeping projects up-to-date across teams.
+**AI Rules Sync (ais)** is a CLI tool designed to synchronize agent rules from a centralized Git repository to local projects using symbolic links. It supports **Cursor rules**, **Cursor commands**, **Cursor skills**, **Copilot instructions**, and **Claude Code skills/agents**, keeping projects up-to-date across teams.
 
 ## Core Concepts
-- **Rules Repository**: A Git repository containing rule definitions in official tool paths (`.cursor/rules/`, `.cursor/commands/`, `.github/instructions/`, `.claude/skills/`, `.claude/agents/`, `plugins/`).
+- **Rules Repository**: A Git repository containing rule definitions in official tool paths (`.cursor/rules/`, `.cursor/commands/`, `.cursor/skills/`, `.github/instructions/`, `.claude/skills/`, `.claude/agents/`).
 - **Symbolic Links**: Entries are linked from the local cache of the repo to project directories, avoiding file duplication and drift.
-- **Dependency Tracking**: Uses `ai-rules-sync.json` to track project dependencies (Cursor rules + commands, Copilot instructions, Claude skills/agents/plugins).
+- **Dependency Tracking**: Uses `ai-rules-sync.json` to track project dependencies (Cursor rules/commands/skills, Copilot instructions, Claude skills/agents).
 - **Privacy**: Supports private/local entries via `ai-rules-sync.local.json` and `.git/info/exclude`.
 
 ## Architecture
@@ -27,10 +27,10 @@ src/adapters/
   index.ts              # Registry and helper functions (getAdapter, findAdapterForAlias)
   cursor-rules.ts       # Cursor rules adapter (.cursor/rules/)
   cursor-commands.ts    # Cursor commands adapter (.cursor/commands/)
+  cursor-skills.ts      # Cursor skills adapter (.cursor/skills/)
   copilot-instructions.ts # Copilot instructions adapter (.github/instructions/)
   claude-skills.ts      # Claude skills adapter (.claude/skills/)
   claude-agents.ts      # Claude agents adapter (.claude/agents/)
-  claude-plugins.ts     # Claude plugins adapter (plugins/)
 
 src/sync-engine.ts      # Generic linkEntry/unlinkEntry functions
 src/link.ts             # Backward-compatible wrappers
@@ -74,6 +74,7 @@ interface SourceDirConfig {
   cursor?: {
     rules?: string;       // Default: ".cursor/rules"
     commands?: string;    // Default: ".cursor/commands"
+    skills?: string;      // Default: ".cursor/skills"
   };
   copilot?: {
     instructions?: string; // Default: ".github/instructions"
@@ -81,7 +82,6 @@ interface SourceDirConfig {
   claude?: {
     skills?: string;      // Default: ".claude/skills"
     agents?: string;      // Default: ".claude/agents"
-    plugins?: string;     // Default: "plugins"
   };
 }
 ```
@@ -97,6 +97,7 @@ interface ProjectConfig {
   cursor?: {
     rules?: Record<string, RuleEntry>;
     commands?: Record<string, RuleEntry>;
+    skills?: Record<string, RuleEntry>;
   };
   copilot?: {
     instructions?: Record<string, RuleEntry>;
@@ -104,7 +105,6 @@ interface ProjectConfig {
   claude?: {
     skills?: Record<string, RuleEntry>;
     agents?: Record<string, RuleEntry>;
-    plugins?: Record<string, RuleEntry>;
   };
 }
 ```
@@ -159,28 +159,28 @@ This eliminates the need for separate functions like `addCursorDependency`, `add
 - Links `<repo>/.github/instructions/<name>` to `.github/instructions/<alias>`.
 - Supports `.md` and `.instructions.md` suffixes with conflict detection.
 
-### 5. Claude Skill Synchronization
+### 5. Cursor Skill Synchronization
+- **Syntax**: `ais cursor skills add <skillName> [alias]`
+- Links `<repo>/.cursor/skills/<skillName>` to `.cursor/skills/<alias>`.
+- Directory-based synchronization.
+
+### 6. Claude Skill Synchronization
 - **Syntax**: `ais claude skills add <skillName> [alias]`
 - Links `<repo>/.claude/skills/<skillName>` to `.claude/skills/<alias>`.
 - Directory-based synchronization.
 
-### 6. Claude Agent Synchronization
+### 7. Claude Agent Synchronization
 - **Syntax**: `ais claude agents add <agentName> [alias]`
 - Links `<repo>/.claude/agents/<agentName>` to `.claude/agents/<alias>`.
 - Directory-based synchronization.
 
-### 7. Claude Plugin Synchronization
-- **Syntax**: `ais claude plugins add <pluginName> [alias]`
-- Links `<repo>/plugins/<pluginName>` to `plugins/<alias>`.
-- Directory-based synchronization for entire plugin directories.
-
 ### 8. Installation
 - `ais cursor install` - Install all Cursor rules, commands, and skills.
 - `ais copilot install` - Install all Copilot instructions.
-- `ais claude install` - Install all Claude skills, agents, and plugins.
+- `ais claude install` - Install all Claude skills and agents.
 - `ais install` - Install everything.
 
-### 6. Configuration Files
+### 9. Configuration Files
 
 **Rules Repository Config** (`ai-rules-sync.json` in the rules repo):
 ```json
@@ -189,15 +189,15 @@ This eliminates the need for separate functions like `addCursorDependency`, `add
   "sourceDir": {
     "cursor": {
       "rules": ".cursor/rules",
-      "commands": ".cursor/commands"
+      "commands": ".cursor/commands",
+      "skills": ".cursor/skills"
     },
     "copilot": {
       "instructions": ".github/instructions"
     },
     "claude": {
       "skills": ".claude/skills",
-      "agents": ".claude/agents",
-      "plugins": "plugins"
+      "agents": ".claude/agents"
     }
   }
 }
@@ -208,15 +208,15 @@ This eliminates the need for separate functions like `addCursorDependency`, `add
 {
   "cursor": {
     "rules": { "react": "https://..." },
-    "commands": { "deploy-docs": "https://..." }
+    "commands": { "deploy-docs": "https://..." },
+    "skills": { "code-review": "https://..." }
   },
   "copilot": {
     "instructions": { "general": "https://..." }
   },
   "claude": {
-    "skills": { "code-review": "https://..." },
-    "agents": { "debugger": "https://..." },
-    "plugins": { "my-plugin": "https://..." }
+    "skills": { "my-skill": "https://..." },
+    "agents": { "debugger": "https://..." }
   }
 }
 ```
@@ -226,7 +226,7 @@ This eliminates the need for separate functions like `addCursorDependency`, `add
 {
   "rootPath": "src",
   "sourceDir": {
-    "cursor": { "rules": ".cursor/rules", "commands": ".cursor/commands" },
+    "cursor": { "rules": ".cursor/rules", "commands": ".cursor/commands", "skills": ".cursor/skills" },
     "claude": { "skills": ".claude/skills" }
   },
   "cursor": {
@@ -242,14 +242,14 @@ This eliminates the need for separate functions like `addCursorDependency`, `add
 - **Legacy format**: Old configs with `cursor.rules` as string (instead of `sourceDir.cursor.rules`) are still supported for backward compatibility.
 - **Legacy files**: `cursor-rules*.json` are read-only compatible; write operations migrate to new format.
 
-### 7. Shell Completion
+### 10. Shell Completion
 - **Auto-Install**: On first run, AIS prompts to install shell completion automatically.
 - **Manual Install**: `ais completion install` - Installs completion to shell config file.
 - **Script Output**: `ais completion [bash|zsh|fish]` - Outputs raw completion script.
 - **Detection**: Automatically detects shell type from `$SHELL` environment variable.
 - **Config Tracking**: Uses `completionInstalled` flag in global config to avoid repeated prompts.
 - **Zsh Setup**: Requires `autoload -Uz compinit && compinit` before AIS completion in `~/.zshrc`.
-- **Claude Support**: Tab completion works for `ais claude skills/agents/plugins add <Tab>`.
+- **Tab Completion**: Works for `ais cursor rules/commands/skills add <Tab>` and `ais claude skills/agents add <Tab>`.
 
 ## Development Guidelines
 - **TypeScript**: Strict mode enabled.

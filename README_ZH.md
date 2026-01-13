@@ -1,7 +1,7 @@
 # AI Rules Sync
 
 **AI Rules Sync (AIS)**
-*轻松同步、管理和共享你的 Agent 规则（支持 Cursor 规则、Cursor 命令、Copilot 指令）。*
+*轻松同步、管理和共享你的 Agent 规则（支持 Cursor 规则、Cursor 命令、Cursor 技能、Copilot 指令、Claude 技能和代理）。*
 
 AIS 允许你在 Git 仓库中集中管理规则，并通过软链接将其同步到任意数量的项目中。告别复制粘贴带来的配置漂移。
 
@@ -22,7 +22,10 @@ AIS 允许你在 Git 仓库中集中管理规则，并通过软链接将其同�
 |------|------|------------|----------|
 | Cursor | Rules | `.cursor/rules/` | `.cursor/rules/` |
 | Cursor | Commands | `.cursor/commands/` | `.cursor/commands/` |
+| Cursor | Skills | `.cursor/skills/` | `.cursor/skills/` |
 | Copilot | Instructions | `.github/instructions/` | `.github/instructions/` |
+| Claude | Skills | `.claude/skills/` | `.claude/skills/` |
+| Claude | Agents | `.claude/agents/` | `.claude/agents/` |
 
 ## 安装
 
@@ -35,7 +38,10 @@ npm install -g ai-rules-sync
 默认情况下，AIS 会在官方工具配置路径中查找规则：
 - `.cursor/rules/` - Cursor 规则
 - `.cursor/commands/` - Cursor 命令
+- `.cursor/skills/` - Cursor 技能
 - `.github/instructions/` - Copilot 指令
+- `.claude/skills/` - Claude 技能
+- `.claude/agents/` - Claude 代理
 
 你可以通过在规则仓库中添加 `ai-rules-sync.json` 文件来自定义这些路径：
 
@@ -45,10 +51,15 @@ npm install -g ai-rules-sync
   "sourceDir": {
     "cursor": {
       "rules": ".cursor/rules",
-      "commands": ".cursor/commands"
+      "commands": ".cursor/commands",
+      "skills": ".cursor/skills"
     },
     "copilot": {
       "instructions": ".github/instructions"
+    },
+    "claude": {
+      "skills": ".claude/skills",
+      "agents": ".claude/agents"
     }
   }
 }
@@ -57,7 +68,10 @@ npm install -g ai-rules-sync
 - `rootPath`: 可选的全局前缀，应用于所有源目录（默认：空，表示仓库根目录）
 - `sourceDir.cursor.rules`: Cursor 规则的源目录（默认：`.cursor/rules`）
 - `sourceDir.cursor.commands`: Cursor 命令的源目录（默认：`.cursor/commands`）
+- `sourceDir.cursor.skills`: Cursor 技能的源目录（默认：`.cursor/skills`）
 - `sourceDir.copilot.instructions`: Copilot 指令的源目录（默认：`.github/instructions`）
+- `sourceDir.claude.skills`: Claude 技能的源目录（默认：`.claude/skills`）
+- `sourceDir.claude.agents`: Claude 代理的源目录（默认：`.claude/agents`）
 
 > **注意**：旧的扁平格式（`cursor.rules` 为字符串）仍然支持向后兼容。
 
@@ -147,6 +161,28 @@ ais cursor commands remove deploy-docs-v2
 ais cursor commands install
 ```
 
+### 同步 Cursor 技能到项目（.cursor/skills）
+
+```bash
+ais cursor skills add [skill name] [alias]
+```
+
+该命令会将规则仓库 `.cursor/skills/` 目录下的技能目录同步到项目的 `.cursor/skills/` 目录。
+
+```bash
+# 添加 'code-review' 技能
+ais cursor skills add code-review
+
+# 添加技能并指定别名
+ais cursor skills add code-review my-review
+
+# 移除技能
+ais cursor skills remove my-review
+
+# 从配置安装所有技能
+ais cursor skills install
+```
+
 ### 同步 Copilot 指令到项目（.github/instructions）
 
 ```bash
@@ -160,6 +196,50 @@ ais copilot add [name] [alias]
 - 如果规则仓库里同时存在 `foo.md` 和 `foo.instructions.md`，AIS 会报错并要求显式指定后缀。
 - 如果 `alias` 不带后缀，AIS 会保留源文件后缀（例如可能生成 `y.instructions.md`）。
 
+### 同步 Claude 技能到项目（.claude/skills）
+
+```bash
+ais claude skills add [skillName] [alias]
+```
+
+默认映射：规则仓库 `.claude/skills/<skillName>` → 项目 `.claude/skills/<alias|skillName>`。
+
+```bash
+# 添加 'code-review' 技能
+ais claude skills add code-review
+
+# 添加技能并指定别名
+ais claude skills add code-review my-review
+
+# 移除技能
+ais claude skills remove my-review
+
+# 从配置安装所有技能
+ais claude skills install
+```
+
+### 同步 Claude 代理到项目（.claude/agents）
+
+```bash
+ais claude agents add [agentName] [alias]
+```
+
+默认映射：规则仓库 `.claude/agents/<agentName>` → 项目 `.claude/agents/<alias|agentName>`。
+
+```bash
+# 添加 'debugger' 代理
+ais claude agents add debugger
+
+# 添加代理并指定别名
+ais claude agents add debugger my-debugger
+
+# 移除代理
+ais claude agents remove my-debugger
+
+# 从配置安装所有代理
+ais claude agents install
+```
+
 ### 移除条目
 
 ```bash
@@ -169,15 +249,24 @@ ais cursor remove [alias]
 # 移除 Cursor 命令
 ais cursor commands remove [alias]
 
+# 移除 Cursor 技能
+ais cursor skills remove [alias]
+
 # 移除 Copilot 指令
 ais copilot remove [alias]
+
+# 移除 Claude 技能
+ais claude skills remove [alias]
+
+# 移除 Claude 代理
+ais claude agents remove [alias]
 ```
 
 该命令会删除软链接、ignore 文件中的条目，并从 `ai-rules-sync.json`（或 `ai-rules-sync.local.json`）中移除依赖。
 
 ### ai-rules-sync.json 结构
 
-`ai-rules-sync.json` 文件用于分别记录 Cursor 规则、命令和 Copilot 指令。它支持简单的字符串格式（仅 URL）和对象格式（包含 URL 和原名）。
+`ai-rules-sync.json` 文件用于分别记录 Cursor 规则、命令、技能、Copilot 指令和 Claude 技能/代理。它支持简单的字符串格式（仅 URL）和对象格式（包含 URL 和原名）。
 
 ```json
 {
@@ -188,11 +277,22 @@ ais copilot remove [alias]
     },
     "commands": {
       "deploy-docs": "https://github.com/user/repo.git"
+    },
+    "skills": {
+      "code-review": "https://github.com/user/repo.git"
     }
   },
   "copilot": {
     "instructions": {
       "general": "https://github.com/user/repo.git"
+    }
+  },
+  "claude": {
+    "skills": {
+      "my-skill": "https://github.com/user/repo.git"
+    },
+    "agents": {
+      "debugger": "https://github.com/user/repo.git"
     }
   }
 }
@@ -213,7 +313,10 @@ ais cursor install
 # 安装所有 Copilot 指令
 ais copilot install
 
-# 安装全部（Cursor + Copilot）
+# 安装所有 Claude 技能和代理
+ais claude install
+
+# 安装全部（Cursor + Copilot + Claude）
 ais install
 ```
 
@@ -291,9 +394,12 @@ ais completion fish | source
 启用后，你可以使用 Tab 键补全：
 
 ```bash
-ais cursor add <Tab>         # 列出可用的规则
+ais cursor add <Tab>            # 列出可用的规则
 ais cursor commands add <Tab>   # 列出可用的命令
-ais copilot add <Tab>        # 列出可用的指令
+ais cursor skills add <Tab>     # 列出可用的技能
+ais copilot add <Tab>           # 列出可用的指令
+ais claude skills add <Tab>     # 列出可用的 Claude 技能
+ais claude agents add <Tab>     # 列出可用的 Claude 代理
 ```
 
 **注意**：如果遇到 `compdef: command not found` 错误，请确保你的 shell 已初始化补全系统。对于 zsh，请在 `~/.zshrc` 中的 ais 补全行之前添加：

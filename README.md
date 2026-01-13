@@ -7,7 +7,7 @@
 [English](./README.md) | [中文](./README_ZH.md)
 
 **AI Rules Sync (AIS)**
-*Synchronize, manage, and share your agent rules (Cursor rules, Cursor plans, Copilot instructions) with ease.*
+*Synchronize, manage, and share your agent rules (Cursor rules, Cursor commands, Cursor skills, Copilot instructions, Claude skills and agents) with ease.*
 
 AIS allows you to centrally manage rules in Git repositories and synchronize them across projects using symbolic links. Say goodbye to copy-pasting `.mdc` files and drifting configurations.
 
@@ -25,7 +25,7 @@ AIS allows you to centrally manage rules in Git repositories and synchronize the
 | Tool | Type | Default Source Directory | Target Directory |
 |------|------|--------------------------|------------------|
 | Cursor | Rules | `.cursor/rules/` | `.cursor/rules/` |
-| Cursor | Plans | `.cursor/plans/` | `.cursor/plans/` |
+| Cursor | Commands | `.cursor/commands/` | `.cursor/commands/` |
 | Cursor | Skills | `.cursor/skills/` | `.cursor/skills/` |
 | Copilot | Instructions | `.github/instructions/` | `.github/instructions/` |
 | Claude | Skills | `.claude/skills/` | `.claude/skills/` |
@@ -41,8 +41,11 @@ npm install -g ai-rules-sync
 
 By default, AIS looks for rules in the official tool configuration paths:
 - `.cursor/rules/` for Cursor rules
-- `.cursor/plans/` for Cursor plans
+- `.cursor/commands/` for Cursor commands
+- `.cursor/skills/` for Cursor skills
 - `.github/instructions/` for Copilot instructions
+- `.claude/skills/` for Claude skills
+- `.claude/agents/` for Claude agents
 
 You can customize these paths by adding an `ai-rules-sync.json` file to your rules repository:
 
@@ -52,7 +55,7 @@ You can customize these paths by adding an `ai-rules-sync.json` file to your rul
   "sourceDir": {
     "cursor": {
       "rules": ".cursor/rules",
-      "plans": ".cursor/plans",
+      "commands": ".cursor/commands",
       "skills": ".cursor/skills"
     },
     "copilot": {
@@ -68,7 +71,7 @@ You can customize these paths by adding an `ai-rules-sync.json` file to your rul
 
 - `rootPath`: Optional global prefix applied to all source directories (default: empty, meaning repository root)
 - `sourceDir.cursor.rules`: Source directory for Cursor rules (default: `.cursor/rules`)
-- `sourceDir.cursor.plans`: Source directory for Cursor plans (default: `.cursor/plans`)
+- `sourceDir.cursor.commands`: Source directory for Cursor commands (default: `.cursor/commands`)
 - `sourceDir.cursor.skills`: Source directory for Cursor skills (default: `.cursor/skills`)
 - `sourceDir.copilot.instructions`: Source directory for Copilot instructions (default: `.github/instructions`)
 - `sourceDir.claude.skills`: Source directory for Claude skills (default: `.claude/skills`)
