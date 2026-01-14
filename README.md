@@ -239,64 +239,52 @@ This command removes the symbolic link, the ignore entry, and the dependency fro
 
 ### Import entries to rules repository
 
-The `import` command allows you to take existing rules/skills/commands from your project and import them into your rules repository. This is useful when you've created rules locally and want to centralize them.
-
-**How it works:**
-1. Copies the file/directory from your project to the rules repository
-2. Commits the changes to the rules repository
-3. Deletes the original file/directory from your project
-4. Creates a symbolic link back (just like `add`)
-
-**Basic usage:**
+Import existing files/directories from your project to the rules repository:
 
 ```bash
-# Auto-detect tool and type
-ais import my-custom-rule
+# Import a Cursor rule
+ais import cursor rules [name]
+# or
+ais cursor rules import [name]
 
-# Specify tool (auto-detects rules/commands/skills)
-ais cursor import my-custom-rule
+# Import a Cursor command
+ais import cursor commands [name]
 
-# Explicitly specify everything
-ais cursor rules import my-custom-rule
-ais cursor commands import format-code.md
-ais cursor skills import code-review
-ais copilot import test-guide
-ais claude skills import analyzer
-ais claude agents import debugger
+# Import a Copilot instruction
+ais import copilot instructions [name]
+
+# Import a Claude skill
+ais import claude skills [name]
+
+# Import a Claude agent
+ais import claude agents [name]
 ```
 
-**Flags:**
-
-- `-l, --local`: Import as private rule (stores in `ai-rules-sync.local.json`)
-- `-m, --message <msg>`: Custom git commit message
+**Options:**
+- `-m, --message <message>`: Custom git commit message
 - `-f, --force`: Overwrite if entry already exists in repository
-- `-p, --push`: Automatically push to remote repository after commit
+- `-p, --push`: Push to remote repository after commit
+- `-l, --local`: Add to ai-rules-sync.local.json (private)
 
 **Examples:**
 
 ```bash
-# Import with custom commit message
-ais cursor rules import my-rule -m "Add custom authentication rule"
+# Import a local rule to the rules repository
+ais import cursor rules my-custom-rule
 
-# Import as private rule
-ais cursor rules import private-rule --local
+# Import with custom commit message and push
+ais import cursor rules my-rule -m "Add my custom rule" --push
 
-# Force overwrite existing entry and push to remote
-ais cursor rules import my-rule --force --push
-
-# Import Copilot instruction
-ais copilot import test-guide
-
-# Import Claude skill
-ais claude skills import code-review
+# Overwrite existing entry in repository
+ais cursor rules import my-rule --force
 ```
 
-**Error handling:**
-
-- If the entry doesn't exist in your project, you'll get an error
-- If the entry is already a symlink (managed by ais), it won't be imported
-- If the entry exists in the repository without `--force`, import will fail
-- After import, the entry is managed like any other synced rule
+The import command will:
+1. Copy the entry from your project to the rules repository
+2. Create a git commit with the entry
+3. Optionally push to remote (with `--push`)
+4. Replace the original with a symbolic link
+5. Add the dependency to your project config
 
 ### ai-rules-sync.json structure
 

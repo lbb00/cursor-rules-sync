@@ -15,29 +15,45 @@
 - **Config**: Stored in `~/.ai-rules-sync/config.json` (global) and project roots.
 - **Git Operations**: Uses `execa` to run git commands; stores repos in `~/.ai-rules-sync/repos/`.
 - **Plugin Architecture**: Modular adapter system for different AI tools.
+- **Modular CLI**: Declarative command registration using adapters.
+
+### Directory Structure
+
+```
+src/
+├── adapters/                # Plugin architecture for different AI tools
+│   ├── types.ts             # SyncAdapter interface
+│   ├── base.ts              # createBaseAdapter factory function
+│   ├── index.ts             # Registry and helper functions
+│   ├── cursor-rules.ts      # Cursor rules adapter
+│   ├── cursor-commands.ts   # Cursor commands adapter
+│   ├── cursor-skills.ts     # Cursor skills adapter
+│   ├── copilot-instructions.ts # Copilot instructions adapter
+│   ├── claude-skills.ts     # Claude skills adapter
+│   └── claude-agents.ts     # Claude agents adapter
+├── cli/                     # CLI registration layer
+│   └── register.ts          # Declarative command registration (registerAdapterCommands)
+├── commands/                # Command handlers
+│   ├── handlers.ts          # Generic add/remove/import handlers
+│   ├── helpers.ts           # Helper functions (getTargetRepo, parseConfigEntry, etc.)
+│   ├── install.ts           # Generic install function
+│   └── index.ts             # Module exports
+├── completion/              # Shell completion
+│   └── scripts.ts           # Shell completion scripts (bash, zsh, fish)
+├── config.ts                # Global config management
+├── git.ts                   # Git operations
+├── index.ts                 # CLI entry point (~560 lines)
+├── link.ts                  # Re-exports from sync-engine
+├── project-config.ts        # Project config management
+├── sync-engine.ts           # Core linkEntry/unlinkEntry/importEntry functions
+└── utils.ts                 # Utility functions
+```
 
 ### Adapter System
 
 The sync engine uses a plugin-based architecture with unified operations:
 
-```
-src/adapters/
-  types.ts              # SyncAdapter interface
-  base.ts               # createBaseAdapter factory function
-  index.ts              # Registry and helper functions (getAdapter, findAdapterForAlias)
-  cursor-rules.ts       # Cursor rules adapter (.cursor/rules/)
-  cursor-commands.ts    # Cursor commands adapter (.cursor/commands/)
-  cursor-skills.ts      # Cursor skills adapter (.cursor/skills/)
-  copilot-instructions.ts # Copilot instructions adapter (.github/instructions/)
-  claude-skills.ts      # Claude skills adapter (.claude/skills/)
-  claude-agents.ts      # Claude agents adapter (.claude/agents/)
-
-src/sync-engine.ts      # Generic linkEntry/unlinkEntry functions
-src/link.ts             # Backward-compatible wrappers
-src/project-config.ts   # addDependencyGeneric, removeDependencyGeneric functions
-```
-
-**SyncAdapter Interface (Extended):**
+**SyncAdapter Interface:**
 ```typescript
 interface SyncAdapter {
   // Core properties
@@ -45,7 +61,7 @@ interface SyncAdapter {
   tool: string;           // e.g. "cursor"
   subtype: string;        // e.g. "rules", "commands"
   configPath: [string, string]; // e.g. ['cursor', 'rules']
-  defaultSourceDir: string; // e.g. ".cursor/rules", ".cursor/commands", ".github/instructions"
+  defaultSourceDir: string; // e.g. ".cursor/rules"
   targetDir: string;      // e.g. ".cursor/rules"
   mode: 'directory' | 'file';
   fileSuffixes?: string[];
@@ -66,9 +82,63 @@ interface SyncAdapter {
 - **Unified Interface**: All adapters provide the same add/remove/link/unlink operations
 - **No Hardcoding**: configPath allows generic functions to work with any adapter
 - **Automatic Routing**: findAdapterForAlias() finds the right adapter based on where alias is configured
-- **Reduced Duplication**: Eliminated addCursorDependency, addPlanDependency, addCopilotDependency duplication
+- **Reduced Duplication**: Single generic handler for all add/remove/install/import operations
 
-**SourceDirConfig Interface (source directory configuration for rules repos):**
+### Modular CLI Architecture
+
+The CLI uses a declarative registration approach:
+
+**Declarative Command Registration (`src/cli/register.ts`):**
+```typescript
+interface RegisterCommandsOptions {
+  adapter: SyncAdapter;
+  parentCommand: Command;
+  programOpts: () => { target?: string };
+}
+
+function registerAdapterCommands(options: RegisterCommandsOptions): void {
+  // Automatically registers: add, remove, install, import subcommands
+}
+```
+
+**Generic Command Handlers (`src/commands/handlers.ts`):**
+```typescript
+// All handlers work with any adapter
+async function handleAdd(adapter, ctx, name, alias?): Promise<AddResult>
+async function handleRemove(adapter, projectPath, alias): Promise<RemoveResult>
+async function handleImport(adapter, ctx, name, options): Promise<void>
+```
+
+**Generic Install Function (`src/commands/install.ts`):**
+```typescript
+// Replaces 7 duplicate install functions with one generic function
+async function installEntriesForAdapter(adapter, projectPath): Promise<void>
+async function installEntriesForTool(adapters[], projectPath): Promise<void>
+```
+
+**Helper Functions (`src/commands/helpers.ts`):**
+- `getTargetRepo(options)`: Resolve target repository from options or config
+- `inferDefaultMode(projectPath)`: Auto-detect cursor/copilot mode from config
+- `parseConfigEntry(key, value)`: Parse config entry to extract repoUrl, entryName, alias
+- `resolveCopilotAliasFromConfig(input, keys)`: Resolve copilot alias with suffix handling
+
+### Sync Engine Functions
+
+**`src/sync-engine.ts`:**
+```typescript
+// Link from repo to project
+async function linkEntry(adapter, options): Promise<LinkResult>
+
+// Unlink from project
+async function unlinkEntry(adapter, projectPath, alias): Promise<void>
+
+// Import from project to repo (copy, commit, then create symlink)
+async function importEntry(adapter, options): Promise<{imported, sourceName, targetName}>
+```
+
+### Configuration Interfaces
+
+**SourceDirConfig (for rules repos):**
 ```typescript
 interface SourceDirConfig {
   cursor?: {
@@ -86,7 +156,7 @@ interface SourceDirConfig {
 }
 ```
 
-**ProjectConfig Interface (unified configuration):**
+**ProjectConfig (unified configuration):**
 ```typescript
 interface ProjectConfig {
   // For rules repos: global path prefix
@@ -109,33 +179,14 @@ interface ProjectConfig {
 }
 ```
 
-The `sourceDir` field separates source directory configuration from dependency records, avoiding field name conflicts where `cursor.rules` could mean either a source path (string) or dependencies (object).
-
-**Helper Functions:**
+### Helper Functions
 
 - `getAdapter(tool, subtype)`: Get adapter by tool/subtype, throws if not found
 - `getDefaultAdapter(tool)`: Get the first adapter for a tool
 - `getToolAdapters(tool)`: Get all adapters for a tool
-- `findAdapterForAlias(config, alias)`: Find which adapter manages a specific alias by checking all config sections
-- `addDependencyGeneric(projectPath, configPath, name, repoUrl, alias?, isLocal?)`: Generic function to add dependency to any config section
-- `removeDependencyGeneric(projectPath, configPath, alias)`: Generic function to remove dependency from any config section
-
-## Unified Operation Pattern
-
-With the refactored architecture, operations are now unified across all adapters:
-
-```typescript
-const adapter = findAdapterForAlias(config, alias);
-if (!adapter) throw new Error(`Alias "${alias}" not found`);
-
-// All adapters support the same operations
-await adapter.link(options);           // Link from repo to project
-await adapter.unlink(projectPath, alias); // Unlink from project
-await adapter.addDependency(...);      // Add to config
-await adapter.removeDependency(...);   // Remove from config
-```
-
-This eliminates the need for separate functions like `addCursorDependency`, `addPlanDependency`, `addCopilotDependency`, etc.
+- `findAdapterForAlias(config, alias)`: Find which adapter manages a specific alias
+- `addDependencyGeneric(projectPath, configPath, name, repoUrl, alias?, isLocal?)`: Generic dependency add
+- `removeDependencyGeneric(projectPath, configPath, alias)`: Generic dependency remove
 
 ## Feature Summary
 
@@ -174,42 +225,26 @@ This eliminates the need for separate functions like `addCursorDependency`, `add
 - Links `<repo>/.claude/agents/<agentName>` to `.claude/agents/<alias>`.
 - Directory-based synchronization.
 
-### 8. Installation
+### 8. Import Command
+- **Syntax**: `ais import <tool> <subtype> <name>` or `ais <tool> <subtype> import <name>`
+- Copies entry from project to rules repository, commits, and creates symlink back.
+- **Options**:
+  - `-m, --message <message>`: Custom commit message
+  - `-f, --force`: Overwrite if entry exists in repo
+  - `-p, --push`: Push to remote after commit
+  - `-l, --local`: Add to local config
+- **Examples**:
+  ```bash
+  ais import cursor rules my-rule
+  ais cursor rules import my-rule --push
+  ais import copilot instructions my-instruction -m "Add new instruction"
+  ```
+
+### 9. Installation
 - `ais cursor install` - Install all Cursor rules, commands, and skills.
 - `ais copilot install` - Install all Copilot instructions.
 - `ais claude install` - Install all Claude skills and agents.
 - `ais install` - Install everything.
-
-### 9. Import Entries to Rules Repository
-- **Purpose**: Reverse operation of `add` - imports existing local files/directories into the rules repository
-- **Syntax**:
-  - `ais import <name>` - Auto-detect tool and type
-  - `ais cursor import <name>` - Auto-detect subtype (rules/commands/skills)
-  - `ais cursor rules import <name>` - Explicit import of Cursor rule
-  - `ais cursor commands import <name>` - Explicit import of Cursor command
-  - `ais cursor skills import <name>` - Explicit import of Cursor skill
-  - `ais copilot import <name>` - Import Copilot instruction
-  - `ais claude skills import <name>` - Import Claude skill
-  - `ais claude agents import <name>` - Import Claude agent
-- **Options**:
-  - `--local` (`-l`) - Import as private rule (stores in `ai-rules-sync.local.json`)
-  - `--message <msg>` (`-m`) - Custom git commit message
-  - `--force` (`-f`) - Overwrite if entry already exists in repository
-  - `--push` (`-p`) - Automatically push to remote repository after commit
-- **Workflow**:
-  1. Verifies file/directory exists in project and is not already a symlink
-  2. Copies to rules repository
-  3. Git commits the changes (with optional custom message)
-  4. Optionally pushes to remote (with `--push` flag)
-  5. Deletes original from project
-  6. Creates symlink back to project (using existing `linkEntry` logic)
-  7. Adds to `ai-rules-sync.json` (or `.local.json` with `--local`)
-- **Implementation**: Uses `importEntry()` function in `src/sync-engine.ts` with `ImportOptions` interface extending `SyncOptions`
-- **Error Handling**:
-  - Entry not found in project → Error
-  - Entry is already a symlink → Error (already managed)
-  - Entry exists in repository without `--force` → Error
-  - After import, entry is managed like any other synced rule
 
 ### 10. Configuration Files
 
@@ -252,38 +287,23 @@ This eliminates the need for separate functions like `addCursorDependency`, `add
 }
 ```
 
-**Combined Config** (rules repo that also tracks its own dependencies):
-```json
-{
-  "rootPath": "src",
-  "sourceDir": {
-    "cursor": { "rules": ".cursor/rules", "commands": ".cursor/commands", "skills": ".cursor/skills" },
-    "claude": { "skills": ".claude/skills" }
-  },
-  "cursor": {
-    "rules": { "shared-util": "https://..." }
-  },
-  "claude": {
-    "skills": { "code-review": "https://..." }
-  }
-}
-```
-
 - **`ai-rules-sync.local.json`**: Private dependencies (merged, takes precedence).
-- **Legacy format**: Old configs with `cursor.rules` as string (instead of `sourceDir.cursor.rules`) are still supported for backward compatibility.
+- **Legacy format**: Old configs with `cursor.rules` as string are still supported.
 - **Legacy files**: `cursor-rules*.json` are read-only compatible; write operations migrate to new format.
 
-### 10. Shell Completion
+### 11. Shell Completion
 - **Auto-Install**: On first run, AIS prompts to install shell completion automatically.
 - **Manual Install**: `ais completion install` - Installs completion to shell config file.
 - **Script Output**: `ais completion [bash|zsh|fish]` - Outputs raw completion script.
 - **Detection**: Automatically detects shell type from `$SHELL` environment variable.
-- **Config Tracking**: Uses `completionInstalled` flag in global config to avoid repeated prompts.
-- **Zsh Setup**: Requires `autoload -Uz compinit && compinit` before AIS completion in `~/.zshrc`.
-- **Tab Completion**: Works for `ais cursor rules/commands/skills add <Tab>` and `ais claude skills/agents add <Tab>`.
+- **Shell scripts** stored in `src/completion/scripts.ts`.
 
 ## Development Guidelines
 - **TypeScript**: Strict mode enabled.
 - **Testing**: Vitest for unit tests.
 - **Style**: Functional programming style preferred.
-- **Adding New AI Tools**: Implement a new SyncAdapter and register it in `src/adapters/index.ts`.
+- **Adding New AI Tools**:
+  1. Create adapter in `src/adapters/<tool>.ts`
+  2. Register in `src/adapters/index.ts`
+  3. Add CLI commands in `src/index.ts` using `registerAdapterCommands()`
+  4. Update `ProjectConfig` interface in `src/project-config.ts`

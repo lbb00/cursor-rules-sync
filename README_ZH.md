@@ -266,64 +266,52 @@ ais claude agents remove [alias]
 
 ### 导入条目到规则仓库
 
-`import` 命令允许你将项目中已有的规则/技能/命令导入到规则仓库中。当你在本地创建了规则并希望集中管理时，这个功能非常有用。
-
-**工作原理：**
-1. 将文件/目录从项目复制到规则仓库
-2. 在规则仓库中提交更改
-3. 删除项目中的原始文件/目录
-4. 创建软链接链回项目（就像 `add` 命令一样）
-
-**基本用法：**
+将项目中现有的文件/目录导入到规则仓库：
 
 ```bash
-# 自动检测工具和类型
-ais import my-custom-rule
+# 导入 Cursor 规则
+ais import cursor rules [name]
+# 或者
+ais cursor rules import [name]
 
-# 指定工具（自动检测 rules/commands/skills）
-ais cursor import my-custom-rule
+# 导入 Cursor 命令
+ais import cursor commands [name]
 
-# 明确指定所有内容
-ais cursor rules import my-custom-rule
-ais cursor commands import format-code.md
-ais cursor skills import code-review
-ais copilot import test-guide
-ais claude skills import analyzer
-ais claude agents import debugger
+# 导入 Copilot 指令
+ais import copilot instructions [name]
+
+# 导入 Claude 技能
+ais import claude skills [name]
+
+# 导入 Claude 代理
+ais import claude agents [name]
 ```
 
-**可用标志：**
-
-- `-l, --local`: 导入为私有规则（存储在 `ai-rules-sync.local.json`）
-- `-m, --message <msg>`: 自定义 git 提交消息
-- `-f, --force`: 强制覆盖仓库中的现有条目
-- `-p, --push`: 提交后自动推送到远程仓库
+**选项：**
+- `-m, --message <message>`: 自定义 git commit 消息
+- `-f, --force`: 如果条目已存在于仓库中则覆盖
+- `-p, --push`: commit 后推送到远程仓库
+- `-l, --local`: 添加到 ai-rules-sync.local.json（私有）
 
 **示例：**
 
 ```bash
-# 使用自定义提交消息导入
-ais cursor rules import my-rule -m "添加自定义身份验证规则"
+# 将本地规则导入到规则仓库
+ais import cursor rules my-custom-rule
 
-# 导入为私有规则
-ais cursor rules import private-rule --local
+# 导入时指定 commit 消息并推送
+ais import cursor rules my-rule -m "添加自定义规则" --push
 
-# 强制覆盖现有条目并推送到远程
-ais cursor rules import my-rule --force --push
-
-# 导入 Copilot 指令
-ais copilot import test-guide
-
-# 导入 Claude 技能
-ais claude skills import code-review
+# 覆盖仓库中已存在的条目
+ais cursor rules import my-rule --force
 ```
 
-**错误处理：**
-
-- 如果项目中不存在该条目，会显示错误
-- 如果该条目已经是软链接（由 ais 管理），不会被导入
-- 如果仓库中已存在该条目且未使用 `--force`，导入会失败
-- 导入后，该条目将像其他同步的规则一样被管理
+导入命令会执行以下操作：
+1. 将条目从项目复制到规则仓库
+2. 创建包含该条目的 git commit
+3. 可选推送到远程（使用 `--push`）
+4. 用软链接替换原始文件
+5. 将依赖添加到项目配置中
 
 ### ai-rules-sync.json 结构
 

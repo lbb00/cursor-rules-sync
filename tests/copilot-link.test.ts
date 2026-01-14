@@ -1,7 +1,8 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import path from 'path';
 import fs from 'fs-extra';
-import { linkCopilotInstruction } from '../src/link.js';
+import { linkEntry } from '../src/sync-engine.js';
+import { copilotInstructionsAdapter } from '../src/adapters/copilot-instructions.js';
 import * as projectConfigModule from '../src/project-config.js';
 import * as utilsModule from '../src/utils.js';
 
@@ -40,7 +41,11 @@ describe('Copilot instructions linking', () => {
       return false;
     });
 
-    await linkCopilotInstruction(mockProjectPath, 'foo', mockRepo as any);
+    await linkEntry(copilotInstructionsAdapter, {
+      projectPath: mockProjectPath,
+      name: 'foo',
+      repo: mockRepo as any
+    });
 
     const expectedSource = path.join(mockRepo.path, '.github/instructions', 'foo.md');
     const expectedTarget = path.join(path.resolve(mockProjectPath), '.github', 'instructions', 'foo.md');
@@ -61,7 +66,11 @@ describe('Copilot instructions linking', () => {
       return false;
     });
 
-    await linkCopilotInstruction(mockProjectPath, 'bar', mockRepo as any);
+    await linkEntry(copilotInstructionsAdapter, {
+      projectPath: mockProjectPath,
+      name: 'bar',
+      repo: mockRepo as any
+    });
 
     const expectedSource = path.join(mockRepo.path, '.github/instructions', 'bar.instructions.md');
     const expectedTarget = path.join(path.resolve(mockProjectPath), '.github', 'instructions', 'bar.instructions.md');
@@ -80,8 +89,11 @@ describe('Copilot instructions linking', () => {
       return false;
     });
 
-    await expect(linkCopilotInstruction(mockProjectPath, 'dup', mockRepo as any))
-      .rejects.toThrow(/Both "dup\.instructions\.md" and "dup\.md" exist/);
+    await expect(linkEntry(copilotInstructionsAdapter, {
+      projectPath: mockProjectPath,
+      name: 'dup',
+      repo: mockRepo as any
+    })).rejects.toThrow(/Both "dup\.instructions\.md" and "dup\.md" exist/);
   });
 
   it('preserves source suffix when alias has no suffix', async () => {
@@ -98,7 +110,12 @@ describe('Copilot instructions linking', () => {
       return false;
     });
 
-    await linkCopilotInstruction(mockProjectPath, 'x', mockRepo as any, 'y');
+    await linkEntry(copilotInstructionsAdapter, {
+      projectPath: mockProjectPath,
+      name: 'x',
+      repo: mockRepo as any,
+      alias: 'y'
+    });
 
     const expectedSource = path.join(mockRepo.path, '.github/instructions', 'x.instructions.md');
     const expectedTarget = path.join(path.resolve(mockProjectPath), '.github', 'instructions', 'y.instructions.md');

@@ -1,7 +1,8 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import path from 'path';
 import fs from 'fs-extra';
-import { linkRule } from '../src/link.js';
+import { linkEntry } from '../src/sync-engine.js';
+import { cursorRulesAdapter } from '../src/adapters/cursor-rules.js';
 import * as projectConfigModule from '../src/project-config.js';
 import * as utilsModule from '../src/utils.js';
 
@@ -32,7 +33,11 @@ describe('Link Module', () => {
         vi.mocked(projectConfigModule.getRepoSourceConfig).mockResolvedValue({});
         vi.mocked(projectConfigModule.getSourceDir).mockReturnValue('.cursor/rules');
 
-        await linkRule(mockProjectPath, 'my-rule', mockRepo);
+        await linkEntry(cursorRulesAdapter, {
+            projectPath: mockProjectPath,
+            name: 'my-rule',
+            repo: mockRepo
+        });
 
         const expectedSourcePath = path.join(mockRepo.path, '.cursor/rules', 'my-rule');
         const expectedTargetPath = path.join(path.resolve(mockProjectPath), '.cursor', 'rules', 'my-rule');
@@ -47,7 +52,11 @@ describe('Link Module', () => {
         });
         vi.mocked(projectConfigModule.getSourceDir).mockReturnValue('custom-rules');
 
-        await linkRule(mockProjectPath, 'my-rule', mockRepo);
+        await linkEntry(cursorRulesAdapter, {
+            projectPath: mockProjectPath,
+            name: 'my-rule',
+            repo: mockRepo
+        });
 
         const expectedSourcePath = path.join(mockRepo.path, 'custom-rules', 'my-rule');
         const expectedTargetPath = path.join(path.resolve(mockProjectPath), '.cursor', 'rules', 'my-rule');
@@ -66,8 +75,11 @@ describe('Link Module', () => {
             return true;
         });
 
-        await expect(linkRule(mockProjectPath, 'missing-rule', mockRepo))
-            .rejects.toThrow('Rule "missing-rule" not found in repository.');
+        await expect(linkEntry(cursorRulesAdapter, {
+            projectPath: mockProjectPath,
+            name: 'missing-rule',
+            repo: mockRepo
+        })).rejects.toThrow('Rule "missing-rule" not found in repository.');
     });
 });
 
